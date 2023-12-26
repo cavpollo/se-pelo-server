@@ -79,46 +79,55 @@ fn main() {
                                     match serde_json::from_str::<RequestRoomCreate>(&mut content) {
                                         Ok(deserialized_request) => {
 
-                                            //TODO: Need thread safe id generator that doesn't repeat values...
-                                            let room_id: u32 = game_context.rng.gen();
-                                            let room_code = "abc".to_string(); //TODO: later generate random words
-                                            let room_code2 = room_code.clone(); //TODO: later generate random words
+                                            let player_name = deserialized_request.name;
+                                            let trimmed_player_name = player_name.trim();
 
-                                            let room = Room{
-                                                id : room_id,
-                                                code : room_code,
-                                                room_status : RoomStatus::Waiting
-                                            };
-                                            game_context.rooms.insert(room_id, room);
-                                            
-                                            let player_id = game_context.rng.gen();
-                                            let player = Player {
-                                                id : player_id,
-                                                name : deserialized_request.name,
-                                                owner : true,
-                                                leader : false,
-                                                position : 0,
-                                                score : 0
-                                            };
-                                            game_context.players.insert(player_id, player);
+                                            if trimmed_player_name.is_empty() || trimmed_player_name.len() >= 16 {
+                                                let response = Response::new(StatusCode(400), headers, io::empty(), None, None);
+                                                request.respond(response).unwrap();
+                                            } else {
 
-                                            game_context.room_players.insert(room_id, vec![player_id]);
+                                                //TODO: Need thread safe id generator that doesn't repeat values...
+                                                let room_id: u32 = game_context.rng.gen();
+                                                let room_code = "abc".to_string(); //TODO: later generate random words
+                                                let room_code2 = room_code.clone(); //TODO: later generate random words
 
-                                            println!("{}", game_context.room_players.len());
+                                                let room = Room{
+                                                    id : room_id,
+                                                    code : room_code,
+                                                    room_status : RoomStatus::Waiting
+                                                };
+                                                game_context.rooms.insert(room_id, room);
+                                                
+                                                let player_id = game_context.rng.gen();
+                                                let player = Player {
+                                                    id : player_id,
+                                                    name : trimmed_player_name.to_string(),
+                                                    owner : true,
+                                                    leader : false,
+                                                    position : 0,
+                                                    score : 0
+                                                };
+                                                game_context.players.insert(player_id, player);
 
-                                            let response = ResponseRoomCreate { room_id: room_id, room_code: room_code2, player_id: player_id };
+                                                game_context.room_players.insert(room_id, vec![player_id]);
 
-                                            let serialized_response = serde_json::to_string(&response).unwrap();
+                                                println!("{}", game_context.room_players.len());
 
-                                            // let response = Response::from_string(serialized_response);
-                                            // response.with_status_code(StatusCode(201));
-                                            // response.add_header(access_control_allow_headers);
-                                            // response.add_header(access_control_allow_origin_header);
-                                            // response.add_header(access_control_allow_methods);
-                                            // response.add_header(access_control_allow_max_age);
-                                            let response_reader = BufReader::new(serialized_response.as_bytes());
-                                            let response = Response::new(StatusCode(201), headers, response_reader, Some(serialized_response.len()), None);
-                                            request.respond(response).unwrap();
+                                                let response = ResponseRoomCreate { room_id: room_id, room_code: room_code2, player_id: player_id };
+
+                                                let serialized_response = serde_json::to_string(&response).unwrap();
+
+                                                // let response = Response::from_string(serialized_response);
+                                                // response.with_status_code(StatusCode(201));
+                                                // response.add_header(access_control_allow_headers);
+                                                // response.add_header(access_control_allow_origin_header);
+                                                // response.add_header(access_control_allow_methods);
+                                                // response.add_header(access_control_allow_max_age);
+                                                let response_reader = BufReader::new(serialized_response.as_bytes());
+                                                let response = Response::new(StatusCode(201), headers, response_reader, Some(serialized_response.len()), None);
+                                                request.respond(response).unwrap();
+                                            }
 
                                         },
                                         Err(_) => {
