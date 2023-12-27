@@ -4,6 +4,7 @@ use std::io::{self, BufReader};
 use std::env;
 use std::option::Option;
 use std::str;
+use std::time::Instant;
 
 use rand::Rng;
 use rand::distributions::{Alphanumeric, DistString};
@@ -102,20 +103,21 @@ fn main() {
                                                 let room_code_for_response = room_code.clone();
 
                                                 let room = Room{
-                                                    id : room_id,
-                                                    code : room_code,
-                                                    room_status : RoomStatus::Waiting
+                                                    id: room_id,
+                                                    code: room_code,
+                                                    room_status: RoomStatus::Waiting
                                                 };
                                                 game_context.rooms.insert(room_id, room);
                                                 
                                                 let player_id = game_context.rng.gen();
                                                 let player = Player {
-                                                    id : player_id,
-                                                    name : trimmed_owner_name.to_string(),
-                                                    is_owner : true,
-                                                    is_leader : false,
-                                                    position : 0,
-                                                    score : 0
+                                                    id: player_id,
+                                                    name: trimmed_owner_name.to_string(),
+                                                    is_owner: true,
+                                                    is_leader: false,
+                                                    position: 0,
+                                                    score: 0,
+                                                    last_check: Instant::now()
                                                 };
                                                 game_context.players.insert(player_id, player);
 
@@ -197,13 +199,14 @@ fn main() {
                                                     //TODO: Need thread safe id/code generator that doesn't repeat values...
                                                     let player_id = game_context.rng.gen();
                                                     let player = Player {
-                                                        id : player_id,
-                                                        name : trimmed_player_name.to_string(),
-                                                        is_owner : false,
-                                                        is_leader : false,
+                                                        id: player_id,
+                                                        name: trimmed_player_name.to_string(),
+                                                        is_owner: false,
+                                                        is_leader: false,
                                                         // Could this ever fail?
                                                         position : u8::try_from(players_in_room.len()).unwrap(),
-                                                        score : 0
+                                                        score: 0,
+                                                        last_check: Instant::now()
                                                     };
                                                     game_context.players.insert(player_id, player);
 
@@ -276,22 +279,39 @@ fn main() {
                                                     //TODO: Validate the room is in the context, otherwise 500
                                                     let players_in_room = game_context.room_players.get(&room_id).unwrap();
 
-                                                    //TODO: Check player belongs to room
+                                                    let player_found = players_in_room.iter().find(|&p_id| p_id == &player_id);
+                                                    if player_found.is_none() {
+                                                        println!("RoomCheck - Player not found in room");
 
-                                                    let players_in_room_respose = players_in_room.iter().map(|room_player_id| {
-                                                        //TODO: Validate the user is in the context, otherwise 500
-                                                        let room_player = game_context.players.get(&room_player_id).unwrap();
-                                                        ResponseRoomCheckPlayer::from(room_player) 
-                                                    }).collect();
-                                                    
-                                                    let room_status = room_found.unwrap().room_status.to_string();
+                                                        let response = Response::new(StatusCode(400), headers, io::empty(), None, None);
+                                                        request.respond(response).unwrap();
+                                                    } else {
+                                                        let player_optional = game_context.players.get_mut(&player_id);
+                                                        if player_optional.is_none() {
+                                                            println!("RoomCheck - Player not found!!!");
+    
+                                                            let response = Response::new(StatusCode(500), headers, io::empty(), None, None);
+                                                            request.respond(response).unwrap();
+                                                        } else {
+                                                            let player = player_optional.unwrap();
+                                                            player.last_check = Instant::now();
+
+                                                            let players_in_room_response = players_in_room.iter().map(|room_player_id| {
+                                                                //TODO: Validate the user is in the context, otherwise 500
+                                                                let room_player = game_context.players.get(&room_player_id).unwrap();
+                                                                ResponseRoomCheckPlayer::from(room_player) 
+                                                            }).collect();
+                                                            
+                                                            let room_status = room_found.unwrap().room_status.to_string();
 
 
-                                                    let response_room_create = ResponseRoomCheck { players: players_in_room_respose, room_status: room_status };
-                                                    let serialized_response = serde_json::to_string(&response_room_create).unwrap();
-                                                    let response_reader = BufReader::new(serialized_response.as_bytes());
-                                                    let response = Response::new(StatusCode(201), headers, response_reader, Some(serialized_response.len()), None);
-                                                    request.respond(response).unwrap();
+                                                            let response_room_create = ResponseRoomCheck { players: players_in_room_response, room_status: room_status };
+                                                            let serialized_response = serde_json::to_string(&response_room_create).unwrap();
+                                                            let response_reader = BufReader::new(serialized_response.as_bytes());
+                                                            let response = Response::new(StatusCode(201), headers, response_reader, Some(serialized_response.len()), None);
+                                                            request.respond(response).unwrap();
+                                                        }
+                                                    }
                                                 }
                                             }
 
@@ -378,7 +398,7 @@ fn main() {
 
                                         },
                                         Err(_) => {
-                                            println!("RoomCreate - Cant read JSON");
+                                            println!("GameStart - Cant read JSON");
 
                                             let response = Response::new(StatusCode(400), headers, io::empty(), None, None);
                                             request.respond(response).unwrap();
@@ -387,7 +407,7 @@ fn main() {
 
                                 },
                                 Err(_) => {
-                                    println!("RoomCreate - Cant read request content");
+                                    println!("GameStart - Cant read request content");
 
                                     let response = Response::new(StatusCode(400), headers, io::empty(), None, None);
                                     request.respond(response).unwrap();
@@ -443,9 +463,10 @@ fn get_game_action(method: &Method, url: &str) -> Option<GameAction> {
 impl From<&Player> for ResponseRoomCheckPlayer {
     fn from(player: &Player) -> Self {
         Self {
-            player_id : player.id,
-            player_name : player.name.to_string(),
-            is_owner : player.is_owner
+            player_id: player.id,
+            player_name: player.name.to_string(),
+            is_owner: player.is_owner,
+            last_check: u16::try_from(player.last_check.elapsed().as_secs()).unwrap()
         }
     }
 }
@@ -494,7 +515,8 @@ struct Player {
     is_owner: bool,
     is_leader: bool,
     position: u8,
-    score: u8
+    score: u8,
+    last_check: Instant
 }
 
 
@@ -540,7 +562,8 @@ struct ResponseRoomCheck {
 struct ResponseRoomCheckPlayer {
     player_id: u32,
     player_name: String,
-    is_owner: bool
+    is_owner: bool,
+    last_check: u16
 }
 
 
