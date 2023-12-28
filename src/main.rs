@@ -105,7 +105,9 @@ fn main() {
                                                 let room = Room{
                                                     id: room_id,
                                                     code: room_code,
-                                                    room_status: RoomStatus::Waiting
+                                                    room_status: RoomStatus::Waiting,
+                                                    round_counter: 1,
+                                                    round_total: 10 //TODO: Make Configurable
                                                 };
                                                 game_context.rooms.insert(room_id, room);
                                                 
@@ -115,7 +117,6 @@ fn main() {
                                                     name: trimmed_owner_name.to_string(),
                                                     is_owner: true,
                                                     is_leader: false,
-                                                    position: 0,
                                                     score: 0,
                                                     last_check: Instant::now()
                                                 };
@@ -150,7 +151,7 @@ fn main() {
                             }
                         }
                     },
-                    GameAction::RoomJoin => {                        
+                    GameAction::RoomJoin => {
                         // Could the HeaderField be a constant?
                         let content_type_header_field = HeaderField::from_bytes(b"Content-Type").unwrap();
                         let content_type_found = request.headers().iter().find(|&h| h.field == content_type_header_field);
@@ -184,7 +185,7 @@ fn main() {
 
                                                 let room_found = game_context.rooms.values().find(|&r| r.code == trimmed_room_code);
                                                 if room_found.is_none() {
-                                                    println!("RoomJoin - Cant find room");
+                                                    println!("RoomJoin - Room '{}' not found", trimmed_room_code);
 
                                                     let response = Response::new(StatusCode(400), headers, io::empty(), None, None);
                                                     request.respond(response).unwrap();
@@ -193,6 +194,7 @@ fn main() {
 
                                                     //TODO: Join player: check player name is not already in the Room
                                                     //TODO: Validate the room is in the context, otherwise 500
+                                                    //TODO: Validate max number of players
                                                     let players_in_room = game_context.room_players.get_mut(&room_id).unwrap();
 
                                                     
@@ -203,8 +205,6 @@ fn main() {
                                                         name: trimmed_player_name.to_string(),
                                                         is_owner: false,
                                                         is_leader: false,
-                                                        // Could this ever fail?
-                                                        position : u8::try_from(players_in_room.len()).unwrap(),
                                                         score: 0,
                                                         last_check: Instant::now()
                                                     };
@@ -239,12 +239,12 @@ fn main() {
                             }
                         }
                     },
-                    GameAction::RoomCheck => {                        
+                    GameAction::RoomCheck => {
                         // Could the HeaderField be a constant?
                         let content_type_header_field = HeaderField::from_bytes(b"Content-Type").unwrap();
                         let content_type_found = request.headers().iter().find(|&h| h.field == content_type_header_field);
                         if content_type_found.is_none() || content_type_found.unwrap().value != "application/json; charset=UTF-8" {
-                            println!("RoomCreate - Bad headers");
+                            println!("RoomCheck - Bad headers");
 
                             let response = Response::new(StatusCode(400), headers, io::empty(), None, None);
                             request.respond(response).unwrap();
@@ -271,24 +271,23 @@ fn main() {
 
                                                 let room_found = game_context.rooms.get(&room_id);
                                                 if room_found.is_none() {
-                                                    println!("RoomCheck - Room not found");
+                                                    println!("RoomCheck - Room {} not found", room_id);
 
                                                     let response = Response::new(StatusCode(400), headers, io::empty(), None, None);
                                                     request.respond(response).unwrap();
                                                 } else {
-                                                    //TODO: Validate the room is in the context, otherwise 500
                                                     let players_in_room = game_context.room_players.get(&room_id).unwrap();
 
                                                     let player_found = players_in_room.iter().find(|&p_id| p_id == &player_id);
                                                     if player_found.is_none() {
-                                                        println!("RoomCheck - Player not found in room");
+                                                        println!("RoomCheck - Player {} not found in room {}", player_id, room_id);
 
                                                         let response = Response::new(StatusCode(400), headers, io::empty(), None, None);
                                                         request.respond(response).unwrap();
                                                     } else {
                                                         let player_optional = game_context.players.get_mut(&player_id);
                                                         if player_optional.is_none() {
-                                                            println!("RoomCheck - Player not found!!!");
+                                                            println!("RoomCheck - Player {} not found!!!", player_id);
     
                                                             let response = Response::new(StatusCode(500), headers, io::empty(), None, None);
                                                             request.respond(response).unwrap();
@@ -334,10 +333,7 @@ fn main() {
                             }
                         }
                     },
-                    GameAction::GameStart => {
-                        //TODO: Join player: check owner request for start
-
-                        
+                    GameAction::GameStart => {                        
                         // Could the HeaderField be a constant?
                         let content_type_header_field = HeaderField::from_bytes(b"Content-Type").unwrap();
                         let content_type_found = request.headers().iter().find(|&h| h.field == content_type_header_field);
@@ -369,28 +365,90 @@ fn main() {
 
                                                 let room_found = game_context.rooms.get_mut(&room_id);
                                                 if room_found.is_none() {
-                                                    println!("GameStart - Room not found");
+                                                    println!("GameStart - Room {} not found", room_id);
                                                     let response = Response::new(StatusCode(400), headers, io::empty(), None, None);
                                                     request.respond(response).unwrap();
                                                 } else {
-                                                    //TODO: Check player belongs to room
-                                                    //let players_in_room = game_context.room_players.get(room_id);
+                                                    let players_in_room = game_context.room_players.get(&room_id).unwrap();
 
-                                                    //TODO: Check there are enough players
-                                                    
-                                                    let room = room_found.unwrap();
+                                                    if players_in_room.len() <= 2 {
+                                                        println!("GameStart - Not enough players in room");
 
-                                                    match room.room_status {
-                                                        RoomStatus::Waiting => {
-                                                            room.room_status = RoomStatus::Playing;
+                                                        let response = Response::new(StatusCode(400), headers, io::empty(), None, None);
+                                                        request.respond(response).unwrap();
+                                                    } else {
+                                                        let player_found = players_in_room.iter().find(|&p_id| p_id == &player_id);
+                                                        if player_found.is_none() {
+                                                            println!("GameStart - Player {} not found in room {}", player_id, room_id);
 
-                                                            let response = Response::new(StatusCode(204), headers, io::empty(), None, None);
-                                                            request.respond(response).unwrap();
-                                                        },
-                                                        _ => {
-                                                            println!("GameStart - Room not waiting");
                                                             let response = Response::new(StatusCode(400), headers, io::empty(), None, None);
                                                             request.respond(response).unwrap();
+                                                        } else {
+                                                            let player_optional = game_context.players.get(&player_id);
+                                                            if player_optional.is_none() {
+                                                                println!("GameStart - Player {} not found!!!", player_id);
+        
+                                                                let response = Response::new(StatusCode(500), headers, io::empty(), None, None);
+                                                                request.respond(response).unwrap();
+                                                            } else {
+                                                                let player = player_optional.unwrap();
+
+                                                                if !player.is_owner {
+                                                                    println!("GameStart - Player is not the owner of the room");
+            
+                                                                    let response = Response::new(StatusCode(400), headers, io::empty(), None, None);
+                                                                    request.respond(response).unwrap();
+                                                                } else {
+                                                    
+                                                                    let room = room_found.unwrap();
+                                                                    match room.room_status {
+                                                                        RoomStatus::Waiting => {
+                                                                            // New game and round
+                                                                            room.room_status = RoomStatus::LeaderOptions;
+
+                                                                            let response = Response::new(StatusCode(204), headers, io::empty(), None, None);
+                                                                            request.respond(response).unwrap();
+                                                                        },
+                                                                        RoomStatus::NotifyWinner => {
+                                                                            // Old game but new round
+
+                                                                            let mut resetOk = true;
+                                                                            if room.round_counter == room.round_total {
+                                                                                room.round_counter = 1;
+
+                                                                                for room_player_id in players_in_room {
+                                                                                    let room_player_optional = game_context.players.get_mut(&player_id);
+                                                                                    if room_player_optional.is_none() {
+                                                                                        println!("GameStart - Player {} not found!!!", player_id);
+
+                                                                                        resetOk = false;
+                                                                                        break;
+                                                                                    } else {
+                                                                                        let room_player = room_player_optional.unwrap();
+                                                                                        room_player.score = 0;
+                                                                                    }
+                                                                                }
+                                                                            }
+
+                                                                            if resetOk {
+                                                                                room.room_status = RoomStatus::LeaderOptions;
+
+                                                                                let response = Response::new(StatusCode(204), headers, io::empty(), None, None);
+                                                                                request.respond(response).unwrap();
+                                                                            } else {
+                                                                                println!("GameStart - Reset failed!!!");
+                                                                                let response = Response::new(StatusCode(500), headers, io::empty(), None, None);
+                                                                                request.respond(response).unwrap();
+                                                                            }
+                                                                        },
+                                                                        _ => {
+                                                                            println!("GameStart - Room not waiting");
+                                                                            let response = Response::new(StatusCode(400), headers, io::empty(), None, None);
+                                                                            request.respond(response).unwrap();
+                                                                        }
+                                                                    }
+                                                                }
+                                                            }
                                                         }
                                                     }
                                                 }
@@ -443,7 +501,7 @@ fn get_game_action(method: &Method, url: &str) -> Option<GameAction> {
             "/room-check" => return Some(GameAction::RoomCheck),
             "/game-start" => return Some(GameAction::GameStart),
             //TODO: I know that the Game Status should be a GET, but I don't want to parse the Request's  URL parameters manually.
-            "/game-status" => return Some(GameAction::GameStatus),
+            "/game-options" => return Some(GameAction::GameOptions),
             "/game-pick" => return Some(GameAction::GamePick),
             _ => return None
         },
@@ -466,6 +524,8 @@ impl From<&Player> for ResponseRoomCheckPlayer {
             player_id: player.id,
             player_name: player.name.to_string(),
             is_owner: player.is_owner,
+            is_leader: player.is_leader,
+            score: player.score,
             last_check: u16::try_from(player.last_check.elapsed().as_secs()).unwrap()
         }
     }
@@ -475,7 +535,10 @@ impl fmt::Display for RoomStatus {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
             RoomStatus::Waiting => write!(f, "WAITING"),
-            RoomStatus::Playing => write!(f, "PLAYING")
+            RoomStatus::LeaderOptions => write!(f, "LEADER_OPTIONS"),
+            RoomStatus::LackeyOptions => write!(f, "LACKEY_OPTIONS"),
+            RoomStatus::LeaderPick => write!(f, "LEADER_PICK"),
+            RoomStatus::NotifyWinner => write!(f, "NOTIFY_WINNER"),
         }
     }
 }
@@ -494,19 +557,24 @@ enum GameAction {
     RoomJoin,
     RoomCheck,
     GameStart,
-    GameStatus,
+    GameOptions,
     GamePick
 }
 
 struct Room {
     id: u32,
     code: String,
-    room_status: RoomStatus
+    room_status: RoomStatus,
+    round_counter: u8,
+    round_total: u8,
 }
 
 enum RoomStatus {
     Waiting,
-    Playing
+    LeaderOptions,
+    LackeyOptions,
+    LeaderPick,
+    NotifyWinner
 }
 
 struct Player {
@@ -514,7 +582,6 @@ struct Player {
     name: String,
     is_owner: bool,
     is_leader: bool,
-    position: u8,
     score: u8,
     last_check: Instant
 }
@@ -563,6 +630,8 @@ struct ResponseRoomCheckPlayer {
     player_id: u32,
     player_name: String,
     is_owner: bool,
+    is_leader: bool,
+    score: u8,
     last_check: u16
 }
 
@@ -571,4 +640,30 @@ struct ResponseRoomCheckPlayer {
 struct RequestGameStart {
     room_id: u32,
     player_id: u32
+}
+
+
+#[derive(Deserialize, Debug)]
+struct RequestGameOptions {
+    room_id: u32,
+    player_id: u32
+}
+
+#[derive(Deserialize, Debug)]
+struct ResponseGameOptions {
+    options: Vec<ResponseGameOptionsOption>
+}
+
+#[derive(Deserialize, Debug)]
+struct ResponseGameOptionsOption {
+    option_id: u32,
+    player_name: String
+}
+
+
+#[derive(Deserialize, Debug)]
+struct RequestGamePick {
+    room_id: u32,
+    player_id: u32,
+    option_id: u32
 }
