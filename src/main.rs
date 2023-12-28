@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use std::fmt;
+use std::fs::read_to_string;
 use std::io::{self, BufReader};
 use std::env;
 use std::option::Option;
@@ -15,11 +16,17 @@ use tiny_http::{Header, HeaderField, Method, Response, Server, StatusCode};
 
 
 fn main() {
+    //TODO: is there a smarter way to read line by line things?
+    let prompts: Vec<String> = read_to_string("prompts.csv").unwrap().lines().map(String::from).collect();
+    let prompts_count = prompts.len();
+    let finishers: Vec<String> = read_to_string("finishers.csv").unwrap().lines().map(String::from).collect();
+    let finishers_count = finishers.len();
+
     let port = match env::var("PORT") {
         Ok(p) => p.parse::<u16>().unwrap(),
         Err(..) => 8000,
     };
- 
+
     // Server (TPC bind) errors not handled for simplicity
     let host_port = format!("0.0.0.0:{}", port);
 
@@ -32,12 +39,16 @@ fn main() {
     let mut rooms: HashMap<u32, Room> = HashMap::new();
     let mut players: HashMap<u32, Player> = HashMap::new();
     let mut room_players: HashMap<u32, Vec<u32>> = HashMap::new();
+    let mut player_prompts: HashMap<u32, Vec<u16>> = HashMap::new();
+    let mut player_finishers: HashMap<u32, Vec<u16>> = HashMap::new();
     //TODO: is the mutable Game Context stuff thread-safe?
     let game_context = GameContext {
         rng: &mut rng,
         rooms: &mut rooms,
         players: &mut players,
-        room_players: &mut room_players
+        room_players: &mut room_players,
+        player_prompts: &mut player_prompts,
+        player_finishers: &mut player_finishers,
     };
 
 
@@ -98,32 +109,34 @@ fn main() {
                                             } else {
 
                                                 //TODO: Need thread safe id/code generator that doesn't repeat values...
+                                                let player_id = game_context.rng.gen();
+                                                let player = Player {
+                                                    id: player_id,
+                                                    name: trimmed_owner_name.to_string(),
+                                                    score: 0,
+                                                    last_check: Instant::now()
+                                                };
+                                                game_context.players.insert(player_id, player);
+
                                                 let room_id: u32 = game_context.rng.gen();
-                                                let room_code = Alphanumeric.sample_string(game_context.rng, 6);
+                                                let room_code = Alphanumeric.sample_string(game_context.rng, 6).to_uppercase();
                                                 let room_code_for_response = room_code.clone();
 
                                                 let room = Room{
                                                     id: room_id,
                                                     code: room_code,
                                                     room_status: RoomStatus::Waiting,
+                                                    owner_id: player_id,
+                                                    leader_id: player_id,
                                                     round_counter: 1,
                                                     round_total: 10 //TODO: Make Configurable
                                                 };
                                                 game_context.rooms.insert(room_id, room);
-                                                
-                                                let player_id = game_context.rng.gen();
-                                                let player = Player {
-                                                    id: player_id,
-                                                    name: trimmed_owner_name.to_string(),
-                                                    is_owner: true,
-                                                    is_leader: false,
-                                                    score: 0,
-                                                    last_check: Instant::now()
-                                                };
-                                                game_context.players.insert(player_id, player);
 
                                                 game_context.room_players.insert(room_id, vec![player_id]);
 
+                                                game_context.player_prompts.insert(player_id, vec![]);
+                                                game_context.player_finishers.insert(player_id, vec![]);
 
                                                 let response_room_create = ResponseRoomCreate { room_id: room_id, room_code: room_code_for_response, player_id: player_id };
                                                 let serialized_response = serde_json::to_string(&response_room_create).unwrap();
@@ -197,18 +210,19 @@ fn main() {
                                                     //TODO: Validate max number of players
                                                     let players_in_room = game_context.room_players.get_mut(&room_id).unwrap();
 
-                                                    
+
                                                     //TODO: Need thread safe id/code generator that doesn't repeat values...
                                                     let player_id = game_context.rng.gen();
                                                     let player = Player {
                                                         id: player_id,
                                                         name: trimmed_player_name.to_string(),
-                                                        is_owner: false,
-                                                        is_leader: false,
                                                         score: 0,
                                                         last_check: Instant::now()
                                                     };
                                                     game_context.players.insert(player_id, player);
+
+                                                    game_context.player_prompts.insert(player_id, vec![]);
+                                                    game_context.player_finishers.insert(player_id, vec![]);
 
                                                     players_in_room.push(player_id);
 
@@ -288,23 +302,32 @@ fn main() {
                                                         let player_optional = game_context.players.get_mut(&player_id);
                                                         if player_optional.is_none() {
                                                             println!("RoomCheck - Player {} not found!!!", player_id);
-    
+
                                                             let response = Response::new(StatusCode(500), headers, io::empty(), None, None);
                                                             request.respond(response).unwrap();
                                                         } else {
+                                                            let room = room_found.unwrap();
+
                                                             let player = player_optional.unwrap();
                                                             player.last_check = Instant::now();
 
                                                             let players_in_room_response = players_in_room.iter().map(|room_player_id| {
-                                                                //TODO: Validate the user is in the context, otherwise 500
+                                                                //TODO: Validate the user is in the context.users(?), otherwise 500
                                                                 let room_player = game_context.players.get(&room_player_id).unwrap();
-                                                                ResponseRoomCheckPlayer::from(room_player) 
+                                                                ResponseRoomCheckPlayer::from(room_player)
                                                             }).collect();
-                                                            
-                                                            let room_status = room_found.unwrap().room_status.to_string();
+
+                                                            let room_status = room.room_status.to_string();
 
 
-                                                            let response_room_create = ResponseRoomCheck { players: players_in_room_response, room_status: room_status };
+                                                            let response_room_create = ResponseRoomCheck {
+                                                                players: players_in_room_response,
+                                                                room_status: room_status,
+                                                                owner_id: room.owner_id,
+                                                                leader_id: room.leader_id,
+                                                                round_counter: room.round_counter,
+                                                                round_total: room.round_total
+                                                            };
                                                             let serialized_response = serde_json::to_string(&response_room_create).unwrap();
                                                             let response_reader = BufReader::new(serialized_response.as_bytes());
                                                             let response = Response::new(StatusCode(201), headers, response_reader, Some(serialized_response.len()), None);
@@ -333,7 +356,7 @@ fn main() {
                             }
                         }
                     },
-                    GameAction::GameStart => {                        
+                    GameAction::GameStart => {
                         // Could the HeaderField be a constant?
                         let content_type_header_field = HeaderField::from_bytes(b"Content-Type").unwrap();
                         let content_type_found = request.headers().iter().find(|&h| h.field == content_type_header_field);
@@ -358,7 +381,7 @@ fn main() {
 
                                             if room_id == 0 || player_id == 0 {
                                                 println!("GameStart - Invalid data");
-                    
+
                                                 let response = Response::new(StatusCode(400), headers, io::empty(), None, None);
                                                 request.respond(response).unwrap();
                                             } else {
@@ -369,38 +392,39 @@ fn main() {
                                                     let response = Response::new(StatusCode(400), headers, io::empty(), None, None);
                                                     request.respond(response).unwrap();
                                                 } else {
-                                                    let players_in_room = game_context.room_players.get(&room_id).unwrap();
 
-                                                    if players_in_room.len() <= 2 {
-                                                        println!("GameStart - Not enough players in room");
+                                                    let room = room_found.unwrap();
+
+                                                    if player_id != room.owner_id {
+                                                        println!("GameStart - Player {} is not the owner of the room", player_id);
 
                                                         let response = Response::new(StatusCode(400), headers, io::empty(), None, None);
                                                         request.respond(response).unwrap();
                                                     } else {
-                                                        let player_found = players_in_room.iter().find(|&p_id| p_id == &player_id);
-                                                        if player_found.is_none() {
-                                                            println!("GameStart - Player {} not found in room {}", player_id, room_id);
+
+                                                        let players_in_room = game_context.room_players.get(&room_id).unwrap();
+                                                        let room_player_count = u8::try_from(players_in_room.len()).unwrap();
+                                                        if room_player_count <= 2 {
+                                                            println!("GameStart - Not enough players in room ({})", room_player_count);
 
                                                             let response = Response::new(StatusCode(400), headers, io::empty(), None, None);
                                                             request.respond(response).unwrap();
                                                         } else {
-                                                            let player_optional = game_context.players.get(&player_id);
-                                                            if player_optional.is_none() {
-                                                                println!("GameStart - Player {} not found!!!", player_id);
-        
+                                                            let player_found = players_in_room.iter().find(|&p_id| p_id == &player_id);
+                                                            if player_found.is_none() {
+                                                                println!("GameStart - Player {} not found in room {}", player_id, room_id);
+
                                                                 let response = Response::new(StatusCode(500), headers, io::empty(), None, None);
                                                                 request.respond(response).unwrap();
                                                             } else {
-                                                                let player = player_optional.unwrap();
+                                                                let player_optional = game_context.players.get(&player_id);
+                                                                if player_optional.is_none() {
+                                                                    println!("GameStart - Player {} not found!!!", player_id);
 
-                                                                if !player.is_owner {
-                                                                    println!("GameStart - Player is not the owner of the room");
-            
-                                                                    let response = Response::new(StatusCode(400), headers, io::empty(), None, None);
+                                                                    let response = Response::new(StatusCode(500), headers, io::empty(), None, None);
                                                                     request.respond(response).unwrap();
                                                                 } else {
-                                                    
-                                                                    let room = room_found.unwrap();
+
                                                                     match room.room_status {
                                                                         RoomStatus::Waiting => {
                                                                             // New game and round
@@ -412,16 +436,29 @@ fn main() {
                                                                         RoomStatus::NotifyWinner => {
                                                                             // Old game but new round
 
-                                                                            let mut resetOk = true;
-                                                                            if room.round_counter == room.round_total {
-                                                                                room.round_counter = 1;
+                                                                            let mut reset_ok = true;
+                                                                            if room.round_counter < room.round_total {
+                                                                                // Next round
+                                                                                room.round_counter = room.round_counter + 1;
+
+                                                                                let player_position = room.round_counter % room_player_count;
+                                                                                let player_position_usize = usize::try_from(player_position).unwrap();
+                                                                                room.leader_id = players_in_room[player_position_usize];
+                                                                            } else {
+                                                                                // New game
+                                                                                // TODO: Should it go back to the Waiting Room?
+                                                                                let player_position = (room.round_counter + 1) % room_player_count;
+                                                                                let player_position_usize = usize::try_from(player_position).unwrap();
+                                                                                room.leader_id = players_in_room[player_position_usize];
+
+                                                                                room.round_counter = 0;
 
                                                                                 for room_player_id in players_in_room {
-                                                                                    let room_player_optional = game_context.players.get_mut(&player_id);
+                                                                                    let room_player_optional = game_context.players.get_mut(&room_player_id);
                                                                                     if room_player_optional.is_none() {
-                                                                                        println!("GameStart - Player {} not found!!!", player_id);
+                                                                                        println!("GameStart - Player {} not found!!!", room_player_id);
 
-                                                                                        resetOk = false;
+                                                                                        reset_ok = false;
                                                                                         break;
                                                                                     } else {
                                                                                         let room_player = room_player_optional.unwrap();
@@ -430,7 +467,7 @@ fn main() {
                                                                                 }
                                                                             }
 
-                                                                            if resetOk {
+                                                                            if reset_ok {
                                                                                 room.room_status = RoomStatus::LeaderOptions;
 
                                                                                 let response = Response::new(StatusCode(204), headers, io::empty(), None, None);
@@ -473,12 +510,163 @@ fn main() {
                             }
                         }
                     },
-                    _ => {
-                        println!("Unknown Request");
+                    GameAction::GameOptions => {
+                        // Could the HeaderField be a constant?
+                        let content_type_header_field = HeaderField::from_bytes(b"Content-Type").unwrap();
+                        let content_type_found = request.headers().iter().find(|&h| h.field == content_type_header_field);
+                        if content_type_found.is_none() || content_type_found.unwrap().value != "application/json; charset=UTF-8" {
+                            println!("GameOptions - Bad headers");
+
+                            let response = Response::new(StatusCode(400), headers, io::empty(), None, None);
+                            request.respond(response).unwrap();
+                        } else {
+
+                            let mut content = String::new();
+                            let reader = request.as_reader();
+                            match reader.read_to_string(&mut content) {
+                                Ok(_) => {
+
+                                    match serde_json::from_str::<RequestGameOptions>(&mut content) {
+                                        Ok(deserialized_request) => {
+
+                                            let room_id = deserialized_request.room_id;
+
+                                            let player_id = deserialized_request.player_id;
+
+                                            if room_id == 0 || player_id == 0 {
+                                                println!("GameOptions - Invalid data");
+
+                                                let response = Response::new(StatusCode(400), headers, io::empty(), None, None);
+                                                request.respond(response).unwrap();
+                                            } else {
+
+                                                let room_found = game_context.rooms.get(&room_id);
+                                                if room_found.is_none() {
+                                                    println!("GameOptions - Room {} not found", room_id);
+
+                                                    let response = Response::new(StatusCode(400), headers, io::empty(), None, None);
+                                                    request.respond(response).unwrap();
+                                                } else {
+                                                    let players_in_room = game_context.room_players.get(&room_id).unwrap();
+
+                                                    let player_found = players_in_room.iter().find(|&p_id| p_id == &player_id);
+                                                    if player_found.is_none() {
+                                                        println!("GameOptions - Player {} not found in room {}", player_id, room_id);
+
+                                                        let response = Response::new(StatusCode(400), headers, io::empty(), None, None);
+                                                        request.respond(response).unwrap();
+                                                    } else {
+                                                        let player_optional = game_context.players.get_mut(&player_id);
+                                                        if player_optional.is_none() {
+                                                            println!("GameOptions - Player {} not found!!!", player_id);
+
+                                                            let response = Response::new(StatusCode(500), headers, io::empty(), None, None);
+                                                            request.respond(response).unwrap();
+                                                        } else {
+                                                            let room = room_found.unwrap();
+
+                                                            if room.leader_id == player_id {
+                                                                // Prompts
+                                                                let player_prompts_optional = game_context.player_prompts.get_mut(&player_id);
+                                                                if player_prompts_optional.is_none() {
+                                                                    println!("GameOptions - Player {} prompts not found", player_id);
+
+                                                                    let response = Response::new(StatusCode(500), headers, io::empty(), None, None);
+                                                                    request.respond(response).unwrap();
+                                                                } else {
+                                                                    let player_prompts = player_prompts_optional.unwrap();
+
+                                                                    let player_prompt_count = player_prompts.len();
+                                                                    for _ in player_prompt_count..3 {
+                                                                        let random_position = u16::try_from(game_context.rng.gen_range(0..prompts_count)).unwrap();
+                                                                        player_prompts.push(random_position)
+                                                                    }
+
+                                                                    let options = player_prompts.iter().map(|&prompt_position| {
+                                                                        let prompt_position_usize = usize::try_from(prompt_position).unwrap();
+                                                                        let prompt = &prompts[prompt_position_usize];
+                                                                        ResponseGameOptionsOption {
+                                                                            option_id: prompt_position,
+                                                                            option_text: prompt.to_string()
+                                                                        }
+                                                                    }).collect();
+
+                                                                    let response_game_options = ResponseGameOptions { options: options };
+                                                                    let serialized_response = serde_json::to_string(&response_game_options).unwrap();
+                                                                    let response_reader = BufReader::new(serialized_response.as_bytes());
+                                                                    let response = Response::new(StatusCode(200), headers, response_reader, Some(serialized_response.len()), None);
+                                                                    request.respond(response).unwrap();
+                                                                }
+                                                            } else {
+                                                                // Finishers
+                                                                let player_finishers_optional = game_context.player_finishers.get_mut(&player_id);
+                                                                if player_finishers_optional.is_none() {
+                                                                    println!("GameOptions - Player {} finishers not found", player_id);
+
+                                                                    let response = Response::new(StatusCode(500), headers, io::empty(), None, None);
+                                                                    request.respond(response).unwrap();
+                                                                } else {
+                                                                    let player_finishers = player_finishers_optional.unwrap();
+
+                                                                    let player_finisher_count = player_finishers.len();
+                                                                    for _ in player_finisher_count..8 {
+                                                                        let random_position = u16::try_from(game_context.rng.gen_range(0..finishers_count)).unwrap();
+                                                                        player_finishers.push(random_position)
+                                                                    }
+
+                                                                    let options = player_finishers.iter().map(|&finisher_position| {
+                                                                        let finisher_position_usize = usize::try_from(finisher_position).unwrap();
+                                                                        let finisher = &finishers[finisher_position_usize];
+                                                                        ResponseGameOptionsOption {
+                                                                            option_id: finisher_position,
+                                                                            option_text: finisher.to_string()
+                                                                        }
+                                                                    }).collect();
+
+                                                                    let response_game_options = ResponseGameOptions { options: options };
+                                                                    let serialized_response = serde_json::to_string(&response_game_options).unwrap();
+                                                                    let response_reader = BufReader::new(serialized_response.as_bytes());
+                                                                    let response = Response::new(StatusCode(200), headers, response_reader, Some(serialized_response.len()), None);
+                                                                    request.respond(response).unwrap();
+                                                                }
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                            }
+
+                                        },
+                                        Err(_) => {
+                                            println!("GameOptions - Cant read JSON");
+
+                                            let response = Response::new(StatusCode(400), headers, io::empty(), None, None);
+                                            request.respond(response).unwrap();
+                                        }
+                                    };
+
+                                },
+                                Err(_) => {
+                                    println!("GameOptions - Cant read request content");
+
+                                    let response = Response::new(StatusCode(400), headers, io::empty(), None, None);
+                                    request.respond(response).unwrap();
+                                }
+                            }
+                        }
+                    },
+                    GameAction::GamePick => {
+                        // ?
+                        println!("GamePick: NOT IMPLEMENTED");
 
                         let response = Response::new(StatusCode(500), headers, io::empty(), None, None);
                         request.respond(response).unwrap();
                     }
+                    // _ => {
+                    //     println!("Unknown Request");
+
+                    //     let response = Response::new(StatusCode(500), headers, io::empty(), None, None);
+                    //     request.respond(response).unwrap();
+                    // }
                 }
 
             },
@@ -523,8 +711,6 @@ impl From<&Player> for ResponseRoomCheckPlayer {
         Self {
             player_id: player.id,
             player_name: player.name.to_string(),
-            is_owner: player.is_owner,
-            is_leader: player.is_leader,
             score: player.score,
             last_check: u16::try_from(player.last_check.elapsed().as_secs()).unwrap()
         }
@@ -548,7 +734,11 @@ struct GameContext<'a> {
     rng: &'a mut ThreadRng,
     rooms: &'a mut HashMap<u32, Room>,
     players: &'a mut HashMap<u32, Player>,
-    room_players: &'a mut HashMap<u32, Vec<u32>>
+    room_players: &'a mut HashMap<u32, Vec<u32>>,
+    // Vect could be fixed size because we know the limt?
+    player_prompts: &'a mut HashMap<u32, Vec<u16>>,
+    // Vect could be fixed size because we know the limt?
+    player_finishers: &'a mut HashMap<u32, Vec<u16>>
 }
 
 enum GameAction {
@@ -565,6 +755,8 @@ struct Room {
     id: u32,
     code: String,
     room_status: RoomStatus,
+    owner_id: u32,
+    leader_id: u32,
     round_counter: u8,
     round_total: u8,
 }
@@ -580,8 +772,6 @@ enum RoomStatus {
 struct Player {
     id: u32,
     name: String,
-    is_owner: bool,
-    is_leader: bool,
     score: u8,
     last_check: Instant
 }
@@ -622,15 +812,17 @@ struct RequestRoomCheck {
 #[derive(Serialize, Debug)]
 struct ResponseRoomCheck {
     players: Vec<ResponseRoomCheckPlayer>,
-    room_status: String
+    room_status: String,
+    owner_id: u32,
+    leader_id: u32,
+    round_counter: u8,
+    round_total: u8
 }
 
 #[derive(Serialize, Debug)]
 struct ResponseRoomCheckPlayer {
     player_id: u32,
     player_name: String,
-    is_owner: bool,
-    is_leader: bool,
     score: u8,
     last_check: u16
 }
@@ -649,15 +841,15 @@ struct RequestGameOptions {
     player_id: u32
 }
 
-#[derive(Deserialize, Debug)]
+#[derive(Serialize, Debug)]
 struct ResponseGameOptions {
     options: Vec<ResponseGameOptionsOption>
 }
 
-#[derive(Deserialize, Debug)]
+#[derive(Serialize, Debug)]
 struct ResponseGameOptionsOption {
-    option_id: u32,
-    player_name: String
+    option_id: u16,
+    option_text: String
 }
 
 
@@ -665,5 +857,5 @@ struct ResponseGameOptionsOption {
 struct RequestGamePick {
     room_id: u32,
     player_id: u32,
-    option_id: u32
+    option_id: u16
 }
