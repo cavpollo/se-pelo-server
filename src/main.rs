@@ -10,6 +10,7 @@ use std::time::Instant;
 use rand::Rng;
 use rand::distributions::{Alphanumeric, DistString};
 use rand::rngs::ThreadRng;
+use rand::seq::IteratorRandom;
 
 use serde::{Deserialize, Serialize};
 use tiny_http::{Header, HeaderField, Method, Response, Server, StatusCode};
@@ -42,6 +43,8 @@ fn main() {
     let mut room_prompts: HashMap<u32, Vec<u16>> = HashMap::new();
     let mut room_finishers: HashMap<u32, HashMap<u32, u16>> = HashMap::new();
     let mut player_finishers: HashMap<u32, Vec<u16>> = HashMap::new();
+    let mut room_available_prompts: HashMap<u32, Vec<u16>> = HashMap::new();
+    let mut room_available_finishers: HashMap<u32, Vec<u16>> = HashMap::new();
     //TODO: is the mutable Game Context stuff thread-safe?
     let game_context = GameContext {
         rng: &mut rng,
@@ -51,6 +54,8 @@ fn main() {
         room_prompts: &mut room_prompts,
         room_finishers: &mut room_finishers,
         player_finishers: &mut player_finishers,
+        room_available_prompts: &mut room_available_prompts,
+        room_available_finishers: &mut room_available_finishers
     };
 
 
@@ -140,6 +145,10 @@ fn main() {
 
                                                 game_context.room_prompts.insert(room_id, vec![]);
                                                 game_context.room_finishers.insert(room_id, HashMap::new());
+
+                                                game_context.room_available_prompts.insert(room_id, vec![]);
+
+                                                game_context.room_available_finishers.insert(room_id, vec![]);
 
                                                 game_context.player_finishers.insert(player_id, vec![]);
 
@@ -437,6 +446,17 @@ fn main() {
                                                                             // No need to set the round_counter or turn_counter.
                                                                             // The default values with which the Room was created are fine.
 
+
+                                                                            let room_available_prompts = (0..prompts_count).choose_multiple(game_context.rng, prompts_count);
+                                                                            let room_available_prompts_u16: Vec<u16> = room_available_prompts.iter().map(|&x| x as u16).collect();
+                                                                            game_context.room_available_prompts.insert(room_id, room_available_prompts_u16);
+
+
+                                                                            let room_available_finishers = (0..finishers_count).choose_multiple(game_context.rng, finishers_count);
+                                                                            let room_available_finishers_u16: Vec<u16> = room_available_finishers.iter().map(|&x| x as u16).collect();
+                                                                            game_context.room_available_finishers.insert(room_id, room_available_finishers_u16);
+
+
                                                                             let response = Response::new(StatusCode(204), headers, io::empty(), None, None);
                                                                             request.respond(response).unwrap();
                                                                         },
@@ -588,8 +608,19 @@ fn main() {
 
                                                                             let room_prompt_count = room_prompts.len();
                                                                             for _ in room_prompt_count..3 {
-                                                                                let random_position = u16::try_from(game_context.rng.gen_range(0..prompts_count)).unwrap();
-                                                                                room_prompts.push(random_position)
+                                                                                let room_available_prompts = game_context.room_available_prompts.get_mut(&room_id).unwrap();
+                                                                                let random_prompt = room_available_prompts.pop();
+                                                                                if random_prompt.is_none() {
+                                                                                    // Refill (no need to exclude any)
+                                                                                    let new_room_available_prompts = (0..prompts_count).choose_multiple(game_context.rng, prompts_count);
+                                                                                    let mut new_room_available_prompts_u16: Vec<u16> = new_room_available_prompts.iter().map(|&x| x as u16).collect();
+                                                                                    room_available_prompts.append(&mut new_room_available_prompts_u16);
+
+                                                                                    let new_random_prompt = room_available_prompts.pop().unwrap();
+                                                                                    room_prompts.push(new_random_prompt);
+                                                                                } else {
+                                                                                    room_prompts.push(random_prompt.unwrap());
+                                                                                }
                                                                             }
 
                                                                             let options = room_prompts.iter().map(|&prompt_position| {
@@ -646,7 +677,7 @@ fn main() {
                                                                 match &room.room_status {
                                                                     RoomStatus::LackeyOptions => {
                                                                         // Finishers
-                                                                        let player_finishers_optional = game_context.player_finishers.get_mut(&player_id);
+                                                                        let player_finishers_optional = game_context.player_finishers.get(&player_id);
                                                                         if player_finishers_optional.is_none() {
                                                                             println!("GameOptions - Player {} finishers not found", player_id);
 
@@ -657,11 +688,36 @@ fn main() {
 
                                                                             let player_finisher_count = player_finishers.len();
                                                                             for _ in player_finisher_count..8 {
-                                                                                let random_position = u16::try_from(game_context.rng.gen_range(0..finishers_count)).unwrap();
-                                                                                player_finishers.push(random_position)
+
+                                                                                let room_available_finishers = game_context.room_available_finishers.get_mut(&room_id).unwrap();
+                                                                                let random_finisher = room_available_finishers.pop();
+                                                                                if random_finisher.is_none() {
+                                                                                    let mut temp_finishers: Vec<u16> = vec![];
+                                                                                    for temp_player_id in game_context.room_players.get(&room_id).unwrap() {
+                                                                                        for temp_finisher_id in game_context.player_finishers.get(temp_player_id).unwrap() {
+                                                                                            temp_finishers.push(*temp_finisher_id);
+                                                                                        }
+                                                                                    }
+
+                                                                                    // Refill
+                                                                                    let new_room_available_finishers = (0..finishers_count).choose_multiple(game_context.rng, finishers_count);
+                                                                                    let mut new_room_available_finishers_u16: Vec<u16> = new_room_available_finishers.iter().map(|&x| x as u16)
+                                                                                        .filter(|&x| !temp_finishers.contains(&x))
+                                                                                        .collect();
+                                                                                    room_available_finishers.append(&mut new_room_available_finishers_u16);
+
+                                                                                    let new_random_finisher = room_available_finishers.pop().unwrap();
+
+                                                                                    let player_finishers_mutable = game_context.player_finishers.get_mut(&player_id).unwrap();
+                                                                                    player_finishers_mutable.push(new_random_finisher);
+                                                                                } else {
+                                                                                    let player_finishers_mutable = game_context.player_finishers.get_mut(&player_id).unwrap();
+                                                                                    player_finishers_mutable.push(random_finisher.unwrap());
+                                                                                }
                                                                             }
 
-                                                                            let options = player_finishers.iter().map(|&finisher_position| {
+                                                                            let player_finishers_again = game_context.player_finishers.get(&player_id).unwrap();
+                                                                            let options = player_finishers_again.iter().map(|&finisher_position| {
                                                                                 let finisher_position_usize = usize::try_from(finisher_position).unwrap();
                                                                                 let finisher = &finishers[finisher_position_usize];
                                                                                 ResponseGameOptionsOption {
@@ -1031,7 +1087,11 @@ struct GameContext<'a> {
     // Vect could be fixed size because we know the limt?
     room_finishers: &'a mut HashMap<u32, HashMap<u32, u16>>,
     // Vect could be fixed size because we know the limt?
-    player_finishers: &'a mut HashMap<u32, Vec<u16>>
+    player_finishers: &'a mut HashMap<u32, Vec<u16>>,
+    // Vect could be fixed size because we know the limt?
+    room_available_prompts: &'a mut HashMap<u32, Vec<u16>>,
+    // Vect could be fixed size because we know the limt?
+    room_available_finishers: &'a mut HashMap<u32, Vec<u16>>
 }
 
 enum GameAction {
