@@ -22,6 +22,18 @@ You can find the server code [here](https://github.com/cavpollo/se-pelo-client).
 
 Developers are silly individuals that will take any chance they can get to start a new project in the latest programming framework. Maybe because of FOMO, maybe because they want to assert their dominance. Or maybe both.
 
+## Issues and Ideas
+
+### Issues
+
+Found any issues on the server? (I'm sure there are many.) Report them here.
+
+### Ideas
+
+We have a [Trello board](https://trello.com/w/sepelo). Request to join and add whatever is in your brain there.
+
 ## Merge Requests
 
 All contributions are welcome! Keep the MRs as small as possible though. 🙂
+
+(There isn't a testing framework yet... but it would be greatly appreciated.)

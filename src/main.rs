@@ -137,7 +137,10 @@ fn main() {
                                                     leader_id: player_id,
                                                     round_counter: 1,
                                                     round_total: 4, //TODO: Make Configurable
-                                                    turn_counter: 0
+                                                    turn_counter: 0,
+                                                    selected_prompt_id: None,
+                                                    winner_player_id: None,
+                                                    winner_finisher_id: None
                                                 };
                                                 game_context.rooms.insert(room_id, room);
 
@@ -332,6 +335,52 @@ fn main() {
 
                                                             let room_status = room.room_status.to_string();
 
+                                                            let response_prompt_text: Option<String>;
+                                                            let response_finishers: Option<Vec<ResponseRoomCheckFinisher>>;
+                                                            match &room.room_status {
+                                                                RoomStatus::LackeyOptions => {
+                                                                    let prompt_position = room.selected_prompt_id.unwrap();
+                                                                    let prompt_position_usize = usize::try_from(prompt_position).unwrap();
+                                                                    response_prompt_text = Some(prompts[prompt_position_usize].clone());
+
+                                                                    response_finishers = None;
+                                                                },
+                                                                RoomStatus::LeaderPick => {
+                                                                    let prompt_position = room.selected_prompt_id.unwrap();
+                                                                    let prompt_position_usize = usize::try_from(prompt_position).unwrap();
+                                                                    response_prompt_text = Some(prompts[prompt_position_usize].clone());
+
+                                                                    response_finishers = None;
+                                                                },
+                                                                RoomStatus::NotifyWinner => {
+                                                                    let prompt_position = room.selected_prompt_id.unwrap();
+                                                                    let prompt_position_usize = usize::try_from(prompt_position).unwrap();
+                                                                    response_prompt_text = Some(prompts[prompt_position_usize].clone());
+
+
+                                                                    let room_finishers = game_context.room_finishers.get(&room_id).unwrap();
+                                                                    let converted_finishers = room_finishers.iter().map(|(&player_id, &finisher_id)| {
+
+                                                                        let finisher_position_usize = usize::try_from(finisher_id).unwrap();
+                                                                        let finisher = &finishers[finisher_position_usize];
+
+                                                                        let player = game_context.players.get(&player_id).unwrap();
+
+                                                                        ResponseRoomCheckFinisher {
+                                                                            player_name: player.name.clone(),
+                                                                            finisher_text: finisher.to_string(),
+                                                                            is_winner: (player_id == room.winner_player_id.unwrap())
+                                                                        }
+                                                                    }).collect();
+
+                                                                    response_finishers = Some(converted_finishers);
+                                                                }
+                                                                _ => {
+                                                                    response_prompt_text = None;
+                                                                    response_finishers = None;
+                                                                }
+                                                            }
+
 
                                                             let response_room_create = ResponseRoomCheck {
                                                                 players: players_in_room_response,
@@ -339,7 +388,9 @@ fn main() {
                                                                 owner_id: room.owner_id,
                                                                 leader_id: room.leader_id,
                                                                 round_counter: room.round_counter,
-                                                                round_total: room.round_total
+                                                                round_total: room.round_total,
+                                                                prompt_text: response_prompt_text,
+                                                                finishers: response_finishers
                                                             };
                                                             let serialized_response = serde_json::to_string(&response_room_create).unwrap();
                                                             let response_reader = BufReader::new(serialized_response.as_bytes());
@@ -497,6 +548,9 @@ fn main() {
 
                                                                             if reset_ok {
                                                                                 room.room_status = RoomStatus::LeaderOptions;
+                                                                                room.selected_prompt_id = None;
+                                                                                room.winner_player_id = None;
+                                                                                room.winner_finisher_id = None;
 
                                                                                 let response = Response::new(StatusCode(204), headers, io::empty(), None, None);
                                                                                 request.respond(response).unwrap();
@@ -826,7 +880,7 @@ fn main() {
                                                                 match &room.room_status {
                                                                     RoomStatus::LeaderOptions => {
                                                                         // Prompts
-                                                                        let room_prompts_optional = game_context.room_prompts.get_mut(&room_id);
+                                                                        let room_prompts_optional = game_context.room_prompts.get(&room_id);
                                                                         if room_prompts_optional.is_none() {
                                                                             println!("GamePick - Player {} leader prompts not found", player_id);
 
@@ -842,7 +896,6 @@ fn main() {
                                                                                 let response = Response::new(StatusCode(400), headers, io::empty(), None, None);
                                                                                 request.respond(response).unwrap();
                                                                             } else {
-                                                                                room_prompts.retain(|&pr_id| pr_id == option_id);
 
                                                                                 let room_finishers_optional = game_context.room_finishers.get_mut(&room_id);
                                                                                 if room_finishers_optional.is_none() {
@@ -851,9 +904,11 @@ fn main() {
                                                                                     let response = Response::new(StatusCode(500), headers, io::empty(), None, None);
                                                                                     request.respond(response).unwrap();
                                                                                 } else {
+                                                                                    // Need to clean it so that the lackeys can place new cards on it
                                                                                     room_finishers_optional.unwrap().clear();
 
                                                                                     room.room_status = RoomStatus::LackeyOptions;
+                                                                                    room.selected_prompt_id = Some(option_id);
 
                                                                                     let response = Response::new(StatusCode(204), headers, io::empty(), None, None);
                                                                                     request.respond(response).unwrap();
@@ -880,8 +935,6 @@ fn main() {
                                                                             } else {
                                                                                 let player_finisher = player_finisher_found.unwrap();
 
-                                                                                // Store winner finisher somewhere...
-
                                                                                 let winner_player_id = player_finisher.0;
                                                                                 let winner_player_optional = game_context.players.get_mut(&winner_player_id);
                                                                                 if winner_player_optional.is_none() {
@@ -895,6 +948,8 @@ fn main() {
                                                                                     winner_player.score += 1;
 
                                                                                     room.room_status = RoomStatus::NotifyWinner;
+                                                                                    room.winner_player_id = Some(*winner_player_id);
+                                                                                    room.winner_finisher_id = Some(option_id);
 
                                                                                     let response = Response::new(StatusCode(204), headers, io::empty(), None, None);
                                                                                     request.respond(response).unwrap();
@@ -1085,7 +1140,7 @@ struct GameContext<'a> {
     // Vect could be fixed size because we know the limt?
     room_prompts: &'a mut HashMap<u32, Vec<u16>>,
     // Vect could be fixed size because we know the limt?
-    room_finishers: &'a mut HashMap<u32, HashMap<u32, u16>>,
+    room_finishers: &'a mut HashMap<u32, HashMap<u32, u16>>, // Inner map: PlayerId, FinisherId
     // Vect could be fixed size because we know the limt?
     player_finishers: &'a mut HashMap<u32, Vec<u16>>,
     // Vect could be fixed size because we know the limt?
@@ -1112,7 +1167,10 @@ struct Room {
     leader_id: u32,
     round_counter: u8,
     round_total: u8,
-    turn_counter: u8
+    turn_counter: u8,
+    selected_prompt_id: Option<u16>,
+    winner_player_id: Option<u32>,
+    winner_finisher_id: Option<u16>
 }
 
 enum RoomStatus {
@@ -1170,7 +1228,9 @@ struct ResponseRoomCheck {
     owner_id: u32,
     leader_id: u32,
     round_counter: u8,
-    round_total: u8
+    round_total: u8,
+    prompt_text: Option<String>,
+    finishers: Option<Vec<ResponseRoomCheckFinisher>>
 }
 
 #[derive(Serialize, Debug)]
@@ -1179,6 +1239,13 @@ struct ResponseRoomCheckPlayer {
     player_name: String,
     score: u8,
     last_check: u16
+}
+
+#[derive(Serialize, Debug)]
+struct ResponseRoomCheckFinisher {
+    player_name: String,
+    finisher_text: String,
+    is_winner: bool
 }
 
 
