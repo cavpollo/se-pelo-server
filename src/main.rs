@@ -45,6 +45,7 @@ fn main() {
     let mut player_finishers: HashMap<u32, Vec<u16>> = HashMap::new();
     let mut room_available_prompts: HashMap<u32, Vec<u16>> = HashMap::new();
     let mut room_available_finishers: HashMap<u32, Vec<u16>> = HashMap::new();
+
     //TODO: is the mutable Game Context stuff thread-safe?
     let game_context = GameContext {
         rng: &mut rng,
@@ -61,7 +62,7 @@ fn main() {
 
     //TODO: multiple workers
     for mut request in server.incoming_requests() {
-        println!("received request! method: {:?}, url: {:?}", request.method(), request.url());
+        // println!("received request! method: {:?}, url: {:?}", request.method(), request.url());
         // Headers are noisy:
         // println!("received request! method: {:?}, url: {:?}, headers: {:?}",
         //     request.method(),
@@ -86,6 +87,8 @@ fn main() {
                         request.respond(response).unwrap();
                     },
                     GameAction::RoomCreate => {
+                        println!("RoomCreate request!");
+
                         //TODO: I know the code is reapeating A LOT, but got to learn how to use Rust's ownership before I can start doing refactoring things properly
                         // Could the HeaderField be a constant?
                         let content_type_header_field = HeaderField::from_bytes(b"Content-Type").unwrap();
@@ -182,6 +185,8 @@ fn main() {
                         }
                     },
                     GameAction::RoomJoin => {
+                        println!("RoomJoin request!");
+
                         // Could the HeaderField be a constant?
                         let content_type_header_field = HeaderField::from_bytes(b"Content-Type").unwrap();
                         let content_type_found = request.headers().iter().find(|&h| h.field == content_type_header_field);
@@ -270,6 +275,8 @@ fn main() {
                         }
                     },
                     GameAction::RoomCheck => {
+                        // println!("RoomCheck request!");
+
                         // Could the HeaderField be a constant?
                         let content_type_header_field = HeaderField::from_bytes(b"Content-Type").unwrap();
                         let content_type_found = request.headers().iter().find(|&h| h.field == content_type_header_field);
@@ -421,6 +428,8 @@ fn main() {
                         }
                     },
                     GameAction::GameStart => {
+                        println!("GameStart request!");
+
                         // Could the HeaderField be a constant?
                         let content_type_header_field = HeaderField::from_bytes(b"Content-Type").unwrap();
                         let content_type_found = request.headers().iter().find(|&h| h.field == content_type_header_field);
@@ -497,17 +506,6 @@ fn main() {
                                                                             // No need to set the round_counter or turn_counter.
                                                                             // The default values with which the Room was created are fine.
 
-
-                                                                            let room_available_prompts = (0..prompts_count).choose_multiple(game_context.rng, prompts_count);
-                                                                            let room_available_prompts_u16: Vec<u16> = room_available_prompts.iter().map(|&x| x as u16).collect();
-                                                                            game_context.room_available_prompts.insert(room_id, room_available_prompts_u16);
-
-
-                                                                            let room_available_finishers = (0..finishers_count).choose_multiple(game_context.rng, finishers_count);
-                                                                            let room_available_finishers_u16: Vec<u16> = room_available_finishers.iter().map(|&x| x as u16).collect();
-                                                                            game_context.room_available_finishers.insert(room_id, room_available_finishers_u16);
-
-
                                                                             let response = Response::new(StatusCode(204), headers, io::empty(), None, None);
                                                                             request.respond(response).unwrap();
                                                                         },
@@ -547,6 +545,8 @@ fn main() {
                                                                             }
 
                                                                             if reset_ok {
+                                                                                game_context.room_prompts.get_mut(&room_id).unwrap().clear();
+
                                                                                 room.room_status = RoomStatus::LeaderOptions;
                                                                                 room.selected_prompt_id = None;
                                                                                 room.winner_player_id = None;
@@ -593,6 +593,8 @@ fn main() {
                         }
                     },
                     GameAction::GameOptions => {
+                        println!("GameOptions request!");
+
                         // Could the HeaderField be a constant?
                         let content_type_header_field = HeaderField::from_bytes(b"Content-Type").unwrap();
                         let content_type_found = request.headers().iter().find(|&h| h.field == content_type_header_field);
@@ -666,6 +668,7 @@ fn main() {
                                                                                 let random_prompt = room_available_prompts.pop();
                                                                                 if random_prompt.is_none() {
                                                                                     // Refill (no need to exclude any)
+
                                                                                     let new_room_available_prompts = (0..prompts_count).choose_multiple(game_context.rng, prompts_count);
                                                                                     let mut new_room_available_prompts_u16: Vec<u16> = new_room_available_prompts.iter().map(|&x| x as u16).collect();
                                                                                     room_available_prompts.append(&mut new_room_available_prompts_u16);
@@ -754,6 +757,7 @@ fn main() {
                                                                                     }
 
                                                                                     // Refill
+
                                                                                     let new_room_available_finishers = (0..finishers_count).choose_multiple(game_context.rng, finishers_count);
                                                                                     let mut new_room_available_finishers_u16: Vec<u16> = new_room_available_finishers.iter().map(|&x| x as u16)
                                                                                         .filter(|&x| !temp_finishers.contains(&x))
@@ -820,6 +824,8 @@ fn main() {
                         }
                     },
                     GameAction::GamePick => {
+                        println!("GamePick request!");
+
                         // Could the HeaderField be a constant?
                         let content_type_header_field = HeaderField::from_bytes(b"Content-Type").unwrap();
                         let content_type_found = request.headers().iter().find(|&h| h.field == content_type_header_field);
@@ -844,7 +850,8 @@ fn main() {
 
                                             let option_id = deserialized_request.option_id;
 
-                                            if room_id == 0 || player_id == 0 || option_id == 0 {
+                                            // No need to validate the option_id as it can be zero!
+                                            if room_id == 0 || player_id == 0 {
                                                 println!("GamePick - Invalid data");
 
                                                 let response = Response::new(StatusCode(400), headers, io::empty(), None, None);
