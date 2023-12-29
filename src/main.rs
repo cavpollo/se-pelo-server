@@ -39,7 +39,8 @@ fn main() {
     let mut rooms: HashMap<u32, Room> = HashMap::new();
     let mut players: HashMap<u32, Player> = HashMap::new();
     let mut room_players: HashMap<u32, Vec<u32>> = HashMap::new();
-    let mut player_prompts: HashMap<u32, Vec<u16>> = HashMap::new();
+    let mut room_prompts: HashMap<u32, Vec<u16>> = HashMap::new();
+    let mut room_finishers: HashMap<u32, HashMap<u32, u16>> = HashMap::new();
     let mut player_finishers: HashMap<u32, Vec<u16>> = HashMap::new();
     //TODO: is the mutable Game Context stuff thread-safe?
     let game_context = GameContext {
@@ -47,7 +48,8 @@ fn main() {
         rooms: &mut rooms,
         players: &mut players,
         room_players: &mut room_players,
-        player_prompts: &mut player_prompts,
+        room_prompts: &mut room_prompts,
+        room_finishers: &mut room_finishers,
         player_finishers: &mut player_finishers,
     };
 
@@ -135,7 +137,9 @@ fn main() {
 
                                                 game_context.room_players.insert(room_id, vec![player_id]);
 
-                                                game_context.player_prompts.insert(player_id, vec![]);
+                                                game_context.room_prompts.insert(room_id, vec![]);
+                                                game_context.room_finishers.insert(room_id, HashMap::new());
+
                                                 game_context.player_finishers.insert(player_id, vec![]);
 
                                                 let response_room_create = ResponseRoomCreate { room_id: room_id, room_code: room_code_for_response, player_id: player_id };
@@ -221,7 +225,6 @@ fn main() {
                                                     };
                                                     game_context.players.insert(player_id, player);
 
-                                                    game_context.player_prompts.insert(player_id, vec![]);
                                                     game_context.player_finishers.insert(player_id, vec![]);
 
                                                     players_in_room.push(player_id);
@@ -569,22 +572,22 @@ fn main() {
                                                                 match &room.room_status {
                                                                     RoomStatus::LeaderOptions => {
                                                                         // Prompts
-                                                                        let player_prompts_optional = game_context.player_prompts.get_mut(&player_id);
-                                                                        if player_prompts_optional.is_none() {
-                                                                            println!("GameOptions - Player {} prompts not found", player_id);
+                                                                        let room_prompts_optional = game_context.room_prompts.get_mut(&room_id);
+                                                                        if room_prompts_optional.is_none() {
+                                                                            println!("GameOptions - Room {} prompts not found", room_id);
 
                                                                             let response = Response::new(StatusCode(500), headers, io::empty(), None, None);
                                                                             request.respond(response).unwrap();
                                                                         } else {
-                                                                            let player_prompts = player_prompts_optional.unwrap();
+                                                                            let room_prompts = room_prompts_optional.unwrap();
 
-                                                                            let player_prompt_count = player_prompts.len();
-                                                                            for _ in player_prompt_count..3 {
+                                                                            let room_prompt_count = room_prompts.len();
+                                                                            for _ in room_prompt_count..3 {
                                                                                 let random_position = u16::try_from(game_context.rng.gen_range(0..prompts_count)).unwrap();
-                                                                                player_prompts.push(random_position)
+                                                                                room_prompts.push(random_position)
                                                                             }
 
-                                                                            let options = player_prompts.iter().map(|&prompt_position| {
+                                                                            let options = room_prompts.iter().map(|&prompt_position| {
                                                                                 let prompt_position_usize = usize::try_from(prompt_position).unwrap();
                                                                                 let prompt = &prompts[prompt_position_usize];
                                                                                 ResponseGameOptionsOption {
@@ -603,10 +606,30 @@ fn main() {
                                                                     RoomStatus::LeaderPick => {
                                                                         //TODO
 
-                                                                        println!("GameOptions - NOT IMPLEMENTED");
+                                                                        let room_finishers_optional = game_context.room_finishers.get_mut(&room_id);
+                                                                        if room_finishers_optional.is_none() {
+                                                                            println!("GameOptions - Room {} finishers not found", room_id);
 
-                                                                        let response = Response::new(StatusCode(500), headers, io::empty(), None, None);
-                                                                        request.respond(response).unwrap();
+                                                                            let response = Response::new(StatusCode(500), headers, io::empty(), None, None);
+                                                                            request.respond(response).unwrap();
+                                                                        } else {
+                                                                            let room_finishers = room_finishers_optional.unwrap();
+
+                                                                            let options = room_finishers.values().map(|&finisher_position| {
+                                                                                let finisher_position_usize = usize::try_from(finisher_position).unwrap();
+                                                                                let finisher = &finishers[finisher_position_usize];
+                                                                                ResponseGameOptionsOption {
+                                                                                    option_id: finisher_position,
+                                                                                    option_text: finisher.to_string()
+                                                                                }
+                                                                            }).collect();
+
+                                                                            let response_game_options = ResponseGameOptions { options: options };
+                                                                            let serialized_response = serde_json::to_string(&response_game_options).unwrap();
+                                                                            let response_reader = BufReader::new(serialized_response.as_bytes());
+                                                                            let response = Response::new(StatusCode(200), headers, response_reader, Some(serialized_response.len()), None);
+                                                                            request.respond(response).unwrap();
+                                                                        }
                                                                     }
                                                                     _ => {
                                                                         println!("GameOptions - Player {} requested prompts on the wrong room status {}", player_id, room.room_status);
@@ -683,17 +706,209 @@ fn main() {
                         }
                     },
                     GameAction::GamePick => {
-                        // ?
-                        println!("GamePick: NOT IMPLEMENTED");
+                        // Could the HeaderField be a constant?
+                        let content_type_header_field = HeaderField::from_bytes(b"Content-Type").unwrap();
+                        let content_type_found = request.headers().iter().find(|&h| h.field == content_type_header_field);
+                        if content_type_found.is_none() || content_type_found.unwrap().value != "application/json; charset=UTF-8" {
+                            println!("GamePick - Bad headers");
 
-                        // if leader && LeaderOptions
-                        // -> Store
-                        // if lackey && LackeyOptions
-                        // -> Store
-                        // if
+                            let response = Response::new(StatusCode(400), headers, io::empty(), None, None);
+                            request.respond(response).unwrap();
+                        } else {
 
-                        let response = Response::new(StatusCode(500), headers, io::empty(), None, None);
-                        request.respond(response).unwrap();
+                            let mut content = String::new();
+                            let reader = request.as_reader();
+                            match reader.read_to_string(&mut content) {
+                                Ok(_) => {
+
+                                    match serde_json::from_str::<RequestGamePick>(&mut content) {
+                                        Ok(deserialized_request) => {
+
+                                            let room_id = deserialized_request.room_id;
+
+                                            let player_id = deserialized_request.player_id;
+
+                                            let option_id = deserialized_request.option_id;
+
+                                            if room_id == 0 || player_id == 0 || option_id == 0 {
+                                                println!("GamePick - Invalid data");
+
+                                                let response = Response::new(StatusCode(400), headers, io::empty(), None, None);
+                                                request.respond(response).unwrap();
+                                            } else {
+
+                                                let room_found = game_context.rooms.get_mut(&room_id);
+                                                if room_found.is_none() {
+                                                    println!("GamePick - Room {} not found", room_id);
+
+                                                    let response = Response::new(StatusCode(400), headers, io::empty(), None, None);
+                                                    request.respond(response).unwrap();
+                                                } else {
+                                                    let players_in_room = game_context.room_players.get(&room_id).unwrap();
+
+                                                    let player_found = players_in_room.iter().find(|&p_id| p_id == &player_id);
+                                                    if player_found.is_none() {
+                                                        println!("GamePick - Player {} not found in room {}", player_id, room_id);
+
+                                                        let response = Response::new(StatusCode(400), headers, io::empty(), None, None);
+                                                        request.respond(response).unwrap();
+                                                    } else {
+                                                        let player_optional = game_context.players.get_mut(&player_id);
+                                                        if player_optional.is_none() {
+                                                            println!("GamePick - Player {} not found!!!", player_id);
+
+                                                            let response = Response::new(StatusCode(500), headers, io::empty(), None, None);
+                                                            request.respond(response).unwrap();
+                                                        } else {
+                                                            let room = room_found.unwrap();
+
+                                                            if room.leader_id == player_id {
+                                                                match &room.room_status {
+                                                                    RoomStatus::LeaderOptions => {
+                                                                        // Prompts
+                                                                        let room_prompts_optional = game_context.room_prompts.get_mut(&room_id);
+                                                                        if room_prompts_optional.is_none() {
+                                                                            println!("GamePick - Player {} leader prompts not found", player_id);
+
+                                                                            let response = Response::new(StatusCode(500), headers, io::empty(), None, None);
+                                                                            request.respond(response).unwrap();
+                                                                        } else {
+                                                                            let room_prompts = room_prompts_optional.unwrap();
+
+                                                                            let player_prompt_found = room_prompts.iter().find(|&pr_id| pr_id == &option_id);
+                                                                            if player_prompt_found.is_none() {
+                                                                                println!("GamePick - Player {} leader prompt {} not found", player_id, option_id);
+
+                                                                                let response = Response::new(StatusCode(400), headers, io::empty(), None, None);
+                                                                                request.respond(response).unwrap();
+                                                                            } else {
+                                                                                room_prompts.retain(|&pr_id| pr_id == option_id);
+
+                                                                                let room_finishers_optional = game_context.room_finishers.get_mut(&room_id);
+                                                                                if room_finishers_optional.is_none() {
+                                                                                    println!("GamePick - Room {} finishers not found", room_id);
+
+                                                                                    let response = Response::new(StatusCode(500), headers, io::empty(), None, None);
+                                                                                    request.respond(response).unwrap();
+                                                                                } else {
+                                                                                    room_finishers_optional.unwrap().clear();
+
+                                                                                    room.room_status = RoomStatus::LackeyOptions;
+
+                                                                                    let response = Response::new(StatusCode(204), headers, io::empty(), None, None);
+                                                                                    request.respond(response).unwrap();
+                                                                                }
+                                                                            }
+                                                                        }
+                                                                    },
+                                                                    RoomStatus::LeaderPick => {
+                                                                        println!("GamePick: LeaderPick NOT IMPLEMENTED");
+
+                                                                        let response = Response::new(StatusCode(500), headers, io::empty(), None, None);
+                                                                        request.respond(response).unwrap();
+                                                                    },
+                                                                    _ => {
+                                                                        println!("GamePick - Player {} leader picked an option on the wrong room status {}", player_id, room.room_status);
+
+                                                                        let response = Response::new(StatusCode(400), headers, io::empty(), None, None);
+                                                                        request.respond(response).unwrap();
+                                                                    }
+                                                                }
+                                                            } else {
+                                                                match &room.room_status {
+                                                                    RoomStatus::LackeyOptions => {
+                                                                        // Finishers
+                                                                        let player_finishers_optional = game_context.player_finishers.get_mut(&player_id);
+                                                                        if player_finishers_optional.is_none() {
+                                                                            println!("GameOptions - Player {} lackey finishers not found", player_id);
+
+                                                                            let response = Response::new(StatusCode(500), headers, io::empty(), None, None);
+                                                                            request.respond(response).unwrap();
+                                                                        } else {
+                                                                            let player_finishers = player_finishers_optional.unwrap();
+
+                                                                            let player_finisher_found = player_finishers.iter().find(|&f_id| f_id == &option_id);
+                                                                            if player_finisher_found.is_none() {
+                                                                                println!("GamePick - Player {} lackey finisher {} not found", player_id, option_id);
+
+                                                                                let response = Response::new(StatusCode(400), headers, io::empty(), None, None);
+                                                                                request.respond(response).unwrap();
+                                                                            } else {
+                                                                                let room_finishers_optional = game_context.room_finishers.get_mut(&room_id);
+                                                                                if room_finishers_optional.is_none() {
+                                                                                    println!("GamePick - Room {} finishers not found", room_id);
+
+                                                                                    let response = Response::new(StatusCode(500), headers, io::empty(), None, None);
+                                                                                    request.respond(response).unwrap();
+                                                                                } else {
+                                                                                    let room_finishers = room_finishers_optional.unwrap();
+
+                                                                                    let room_finisher_player_found = room_finishers.get(&player_id);
+                                                                                    if room_finisher_player_found.is_none() {
+                                                                                        room_finishers.insert(player_id, option_id);
+
+                                                                                        let mut all_players_submitted_finishers = true;
+                                                                                        for room_player_id in players_in_room {
+                                                                                            if room_player_id != &room.leader_id {
+                                                                                                let player_submitted_finisher = room_finishers.get(room_player_id);
+                                                                                                if player_submitted_finisher.is_none() {
+                                                                                                    all_players_submitted_finishers = false;
+                                                                                                    break;
+                                                                                                }
+                                                                                            }
+                                                                                        }
+
+                                                                                        //TODO: What about dead clients?
+                                                                                        //      Do we wait for the job to disconnect them?
+                                                                                        //      Or should they just be ignored during the check?
+                                                                                        //TODO: Can we have the owner or leader force things?
+                                                                                        if all_players_submitted_finishers {
+                                                                                            room.room_status = RoomStatus::LeaderPick;
+                                                                                        }
+
+                                                                                        let response = Response::new(StatusCode(204), headers, io::empty(), None, None);
+                                                                                        request.respond(response).unwrap();
+                                                                                    } else {
+                                                                                        println!("GamePick - Player {} lackey finisher already submitted", player_id);
+
+                                                                                        let response = Response::new(StatusCode(400), headers, io::empty(), None, None);
+                                                                                        request.respond(response).unwrap();
+                                                                                    }
+                                                                                }
+                                                                            }
+                                                                        }
+                                                                    },
+                                                                    _ => {
+                                                                        println!("GameOptions - Player {} lackey picked a finisher on the wrong room status {}", player_id, room.room_status);
+
+                                                                        let response = Response::new(StatusCode(400), headers, io::empty(), None, None);
+                                                                        request.respond(response).unwrap();
+                                                                    }
+                                                                }
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                            }
+
+                                        },
+                                        Err(_) => {
+                                            println!("GameOptions - Cant read JSON");
+
+                                            let response = Response::new(StatusCode(400), headers, io::empty(), None, None);
+                                            request.respond(response).unwrap();
+                                        }
+                                    };
+
+                                },
+                                Err(_) => {
+                                    println!("GameOptions - Cant read request content");
+
+                                    let response = Response::new(StatusCode(400), headers, io::empty(), None, None);
+                                    request.respond(response).unwrap();
+                                }
+                            }
+                        }
                     }
                     // _ => {
                     //     println!("Unknown Request");
@@ -770,7 +985,9 @@ struct GameContext<'a> {
     players: &'a mut HashMap<u32, Player>,
     room_players: &'a mut HashMap<u32, Vec<u32>>,
     // Vect could be fixed size because we know the limt?
-    player_prompts: &'a mut HashMap<u32, Vec<u16>>,
+    room_prompts: &'a mut HashMap<u32, Vec<u16>>,
+    // Vect could be fixed size because we know the limt?
+    room_finishers: &'a mut HashMap<u32, HashMap<u32, u16>>,
     // Vect could be fixed size because we know the limt?
     player_finishers: &'a mut HashMap<u32, Vec<u16>>
 }
