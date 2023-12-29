@@ -1,7 +1,7 @@
 # ¡Se peló! - Client
 
 This is the server codebase for the "¡Se peló!" game, which is yet another CAH (Cards Against Humanity) clone.
-Just a hobby project hacked in a couple of days (including all of its horrible code practices).
+Just a hobby project hacked in a couple of days (including all of its horrible code practices). It is basically just a glorified game state machine.
 
 ## Why?
 
@@ -17,6 +17,10 @@ And, well, it was another excuse to code something that I actually found fun in 
 The project was created with the help of [Rust](https://www.rust-lang.org/). It is not a good excuse, but it is the first time I ever play with this tech, so forgive any (if not all) missuses.
 
 You can find the server code [here](https://github.com/cavpollo/se-pelo-client).
+
+### But why Rust?
+
+Developers are silly individuals that will take any chance they can get to start a new project in the latest programming framework. Maybe because of FOMO, maybe because they want to assert their dominance. Or maybe both.
 
 ## Merge Requests
 

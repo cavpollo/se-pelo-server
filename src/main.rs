@@ -131,7 +131,8 @@ fn main() {
                                                     owner_id: player_id,
                                                     leader_id: player_id,
                                                     round_counter: 1,
-                                                    round_total: 10 //TODO: Make Configurable
+                                                    round_total: 4, //TODO: Make Configurable
+                                                    turn_counter: 0
                                                 };
                                                 game_context.rooms.insert(room_id, room);
 
@@ -290,7 +291,7 @@ fn main() {
                                                 if room_found.is_none() {
                                                     println!("RoomCheck - Room {} not found", room_id);
 
-                                                    let response = Response::new(StatusCode(400), headers, io::empty(), None, None);
+                                                    let response = Response::new(StatusCode(404), headers, io::empty(), None, None);
                                                     request.respond(response).unwrap();
                                                 } else {
                                                     let players_in_room = game_context.room_players.get(&room_id).unwrap();
@@ -433,29 +434,33 @@ fn main() {
                                                                             // New game and round
                                                                             room.room_status = RoomStatus::LeaderOptions;
 
+                                                                            // No need to set the round_counter or turn_counter.
+                                                                            // The default values with which the Room was created are fine.
+
                                                                             let response = Response::new(StatusCode(204), headers, io::empty(), None, None);
                                                                             request.respond(response).unwrap();
                                                                         },
                                                                         RoomStatus::NotifyWinner => {
                                                                             // Old game but new round
 
-                                                                            let mut reset_ok = true;
-                                                                            if room.round_counter < room.round_total {
-                                                                                // Next round
-                                                                                room.round_counter = room.round_counter + 1;
+                                                                            room.round_counter += 1;
+                                                                            room.turn_counter = (room.turn_counter + 1) % room_player_count;
 
-                                                                                let player_position = room.round_counter % room_player_count;
-                                                                                let player_position_usize = usize::try_from(player_position).unwrap();
-                                                                                room.leader_id = players_in_room[player_position_usize];
+                                                                            let player_position_usize = usize::try_from(room.turn_counter).unwrap();
+                                                                            room.leader_id = players_in_room[player_position_usize];
+
+                                                                            let mut reset_ok = true;
+                                                                            if room.round_counter <= room.round_total {
+                                                                                // Next round
+
+                                                                                // Nothing
+
                                                                             } else {
                                                                                 // New game
-                                                                                // TODO: Should it go back to the Waiting Room?
-                                                                                let player_position = (room.round_counter + 1) % room_player_count;
-                                                                                let player_position_usize = usize::try_from(player_position).unwrap();
-                                                                                room.leader_id = players_in_room[player_position_usize];
 
-                                                                                room.round_counter = 0;
+                                                                                room.round_counter = 1;
 
+                                                                                // Reset all the player scores
                                                                                 for room_player_id in players_in_room {
                                                                                     let room_player_optional = game_context.players.get_mut(&room_player_id);
                                                                                     if room_player_optional.is_none() {
@@ -1047,6 +1052,7 @@ struct Room {
     leader_id: u32,
     round_counter: u8,
     round_total: u8,
+    turn_counter: u8
 }
 
 enum RoomStatus {
