@@ -604,8 +604,7 @@ fn main() {
                                                                         }
                                                                     }
                                                                     RoomStatus::LeaderPick => {
-                                                                        //TODO
-
+                                                                        // Finishers
                                                                         let room_finishers_optional = game_context.room_finishers.get_mut(&room_id);
                                                                         if room_finishers_optional.is_none() {
                                                                             println!("GameOptions - Room {} finishers not found", room_id);
@@ -802,10 +801,45 @@ fn main() {
                                                                         }
                                                                     },
                                                                     RoomStatus::LeaderPick => {
-                                                                        println!("GamePick: LeaderPick NOT IMPLEMENTED");
+                                                                        let room_finishers_optional = game_context.room_finishers.get_mut(&room_id);
+                                                                        if room_finishers_optional.is_none() {
+                                                                            println!("GamePick - Room {} finishers not found", room_id);
 
-                                                                        let response = Response::new(StatusCode(500), headers, io::empty(), None, None);
-                                                                        request.respond(response).unwrap();
+                                                                            let response = Response::new(StatusCode(500), headers, io::empty(), None, None);
+                                                                            request.respond(response).unwrap();
+                                                                        } else {
+                                                                            let room_finishers = room_finishers_optional.unwrap();
+
+                                                                            let player_finisher_found = room_finishers.iter().find(|(_, &val)| val == option_id);
+                                                                            if player_finisher_found.is_none() {
+                                                                                println!("GamePick - Player {} finisher prompt {} not found", player_id, option_id);
+
+                                                                                let response = Response::new(StatusCode(400), headers, io::empty(), None, None);
+                                                                                request.respond(response).unwrap();
+                                                                            } else {
+                                                                                let player_finisher = player_finisher_found.unwrap();
+
+                                                                                // Store winner finisher somewhere...
+
+                                                                                let winner_player_id = player_finisher.0;
+                                                                                let winner_player_optional = game_context.players.get_mut(&winner_player_id);
+                                                                                if winner_player_optional.is_none() {
+                                                                                    println!("GamePick - Player {} not found", winner_player_id);
+
+                                                                                    let response = Response::new(StatusCode(500), headers, io::empty(), None, None);
+                                                                                    request.respond(response).unwrap();
+                                                                                } else {
+                                                                                    let winner_player = winner_player_optional.unwrap();
+
+                                                                                    winner_player.score += 1;
+
+                                                                                    room.room_status = RoomStatus::NotifyWinner;
+
+                                                                                    let response = Response::new(StatusCode(204), headers, io::empty(), None, None);
+                                                                                    request.respond(response).unwrap();
+                                                                                }
+                                                                            }
+                                                                        }
                                                                     },
                                                                     _ => {
                                                                         println!("GamePick - Player {} leader picked an option on the wrong room status {}", player_id, room.room_status);
@@ -845,6 +879,9 @@ fn main() {
 
                                                                                     let room_finisher_player_found = room_finishers.get(&player_id);
                                                                                     if room_finisher_player_found.is_none() {
+                                                                                        //TODO: This operation here should be atomic to prevent weird game states...
+                                                                                        player_finishers.retain(|&f| f != option_id);
+
                                                                                         room_finishers.insert(player_id, option_id);
 
                                                                                         let mut all_players_submitted_finishers = true;
