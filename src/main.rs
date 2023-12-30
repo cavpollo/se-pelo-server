@@ -10,7 +10,6 @@ use std::time::Instant;
 use rand::Rng;
 use rand::distributions::{Alphanumeric, DistString};
 use rand::rngs::ThreadRng;
-use rand::seq::IteratorRandom;
 
 use serde::{Deserialize, Serialize};
 use tiny_http::{Header, HeaderField, Method, Response, Server, StatusCode};
@@ -19,9 +18,14 @@ use tiny_http::{Header, HeaderField, Method, Response, Server, StatusCode};
 fn main() {
     //TODO: is there a smarter way to read line by line things?
     let prompts: Vec<String> = read_to_string("prompts.csv").unwrap().lines().map(String::from).collect();
-    let prompts_count = prompts.len();
     let finishers: Vec<String> = read_to_string("finishers.csv").unwrap().lines().map(String::from).collect();
-    let finishers_count = finishers.len();
+
+
+    let prompt_ids_usize: Vec<usize> = (0..prompts.len()).collect();
+    let prompt_ids: Vec<u16> = prompt_ids_usize.iter().map(|&x| x as u16).collect();
+
+    let finisher_ids_usize: Vec<usize> = (0..finishers.len()).collect();
+    let finisher_ids: Vec<u16> = finisher_ids_usize.iter().map(|&x| x as u16).collect();
 
     let port = match env::var("PORT") {
         Ok(p) => p.parse::<u16>().unwrap(),
@@ -62,8 +66,10 @@ fn main() {
 
     //TODO: multiple workers
     for mut request in server.incoming_requests() {
+        // This can be quite noisy with all the RoomCheck requests:
         // println!("received request! method: {:?}, url: {:?}", request.method(), request.url());
-        // Headers are noisy:
+
+        // Logging Headers is noisy:
         // println!("received request! method: {:?}, url: {:?}, headers: {:?}",
         //     request.method(),
         //     request.url(),
@@ -669,9 +675,14 @@ fn main() {
                                                                                 if random_prompt.is_none() {
                                                                                     // Refill (no need to exclude any)
 
-                                                                                    let new_room_available_prompts = (0..prompts_count).choose_multiple(game_context.rng, prompts_count);
-                                                                                    let mut new_room_available_prompts_u16: Vec<u16> = new_room_available_prompts.iter().map(|&x| x as u16).collect();
-                                                                                    room_available_prompts.append(&mut new_room_available_prompts_u16);
+                                                                                    // A hacky random vector generator
+                                                                                    let mut prompt_ids_in = prompt_ids.clone();
+                                                                                    let mut prompt_ids_out = vec!();
+                                                                                    while !prompt_ids_in.is_empty() {
+                                                                                        prompt_ids_out.push(prompt_ids_in.remove(game_context.rng.gen_range(0..prompt_ids_in.len())));
+                                                                                    }
+
+                                                                                    room_available_prompts.append(&mut prompt_ids_out);
 
                                                                                     let new_random_prompt = room_available_prompts.pop().unwrap();
                                                                                     room_prompts.push(new_random_prompt);
@@ -758,11 +769,14 @@ fn main() {
 
                                                                                     // Refill
 
-                                                                                    let new_room_available_finishers = (0..finishers_count).choose_multiple(game_context.rng, finishers_count);
-                                                                                    let mut new_room_available_finishers_u16: Vec<u16> = new_room_available_finishers.iter().map(|&x| x as u16)
-                                                                                        .filter(|&x| !temp_finishers.contains(&x))
-                                                                                        .collect();
-                                                                                    room_available_finishers.append(&mut new_room_available_finishers_u16);
+                                                                                    // A hacky random vector generator
+                                                                                    let mut finisher_ids_in = finisher_ids.clone();
+                                                                                    let mut finisher_ids_out = vec!();
+                                                                                    while !finisher_ids_in.is_empty() {
+                                                                                        finisher_ids_out.push(finisher_ids_in.remove(game_context.rng.gen_range(0..finisher_ids_in.len())));
+                                                                                    }
+
+                                                                                    room_available_finishers.append(&mut finisher_ids_out);
 
                                                                                     let new_random_finisher = room_available_finishers.pop().unwrap();
 
@@ -1106,14 +1120,6 @@ fn get_game_action(method: &Method, url: &str) -> Option<GameAction> {
         _ => return None
     };
 }
-
-// Should be useful later... I think
-// let values = match map.entry(key) {
-//     Entry::Occupied(o) => o.into_mut(),
-//     Entry::Vacant(v) => v.insert(default),
-// };
-
-
 
 impl From<&Player> for ResponseRoomCheckPlayer {
     fn from(player: &Player) -> Self {
