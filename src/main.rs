@@ -27,13 +27,18 @@ fn main() {
     let finisher_ids_usize: Vec<usize> = (0..finishers.len()).collect();
     let finisher_ids: Vec<u16> = finisher_ids_usize.iter().map(|&x| x as u16).collect();
 
+    let host = match env::var("HOST") {
+        Ok(p) => p,
+        Err(..) => "0.0.0.0".to_string(),
+    };
+
     let port = match env::var("PORT") {
         Ok(p) => p.parse::<u16>().unwrap(),
         Err(..) => 8000,
     };
 
     // Server (TPC bind) errors not handled for simplicity
-    let host_port = format!("0.0.0.0:{}", port);
+    let host_port = format!("{}:{}", host, port);
 
     //TODO: SSL
     println!("Starting server at {}.", host_port);
@@ -99,7 +104,7 @@ fn main() {
                         // Could the HeaderField be a constant?
                         let content_type_header_field = HeaderField::from_bytes(b"Content-Type").unwrap();
                         let content_type_found = request.headers().iter().find(|&h| h.field == content_type_header_field);
-                        if content_type_found.is_none() || content_type_found.unwrap().value != "application/json; charset=UTF-8" {
+                        if content_type_found.is_none() || (content_type_found.unwrap().value != "application/json" && content_type_found.unwrap().value != "application/json; charset=UTF-8") {
                             println!("RoomCreate - Bad headers");
 
                             let response = Response::new(StatusCode(400), headers, io::empty(), None, None);
@@ -145,7 +150,7 @@ fn main() {
                                                     owner_id: player_id,
                                                     leader_id: player_id,
                                                     round_counter: 1,
-                                                    round_total: 4, //TODO: Make Configurable
+                                                    round_total: 10, //TODO: Make Configurable
                                                     turn_counter: 0,
                                                     selected_prompt_id: None,
                                                     winner_player_id: None,
@@ -343,7 +348,24 @@ fn main() {
                                                             let players_in_room_response = players_in_room.iter().map(|room_player_id| {
                                                                 //TODO: Validate the user is in the context.users(?), otherwise 500
                                                                 let room_player = game_context.players.get(&room_player_id).unwrap();
-                                                                ResponseRoomCheckPlayer::from(room_player)
+                                                                let is_finisher_ready: Option<bool>;
+                                                                if room.leader_id == room_player.id {
+                                                                    is_finisher_ready = None;
+                                                                } else {
+                                                                    let room_finishers = game_context.room_finishers.get(&room_id).unwrap();
+                                                                    if room_finishers.get(room_player_id).is_none() {
+                                                                        is_finisher_ready = Some(false);
+                                                                    } else {
+                                                                        is_finisher_ready = Some(true);
+                                                                    }
+                                                                }
+                                                                ResponseRoomCheckPlayer {
+                                                                    player_id: room_player.id,
+                                                                    player_name: room_player.name.to_string(),
+                                                                    score: room_player.score,
+                                                                    is_finisher_ready: is_finisher_ready,
+                                                                    last_check: u16::try_from(room_player.last_check.elapsed().as_secs()).unwrap()
+                                                                }
                                                             }).collect();
 
                                                             let room_status = room.room_status.to_string();
@@ -1121,17 +1143,6 @@ fn get_game_action(method: &Method, url: &str) -> Option<GameAction> {
     };
 }
 
-impl From<&Player> for ResponseRoomCheckPlayer {
-    fn from(player: &Player) -> Self {
-        Self {
-            player_id: player.id,
-            player_name: player.name.to_string(),
-            score: player.score,
-            last_check: u16::try_from(player.last_check.elapsed().as_secs()).unwrap()
-        }
-    }
-}
-
 impl fmt::Display for RoomStatus {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
@@ -1251,6 +1262,7 @@ struct ResponseRoomCheckPlayer {
     player_id: u32,
     player_name: String,
     score: u8,
+    is_finisher_ready: Option<bool>,
     last_check: u16
 }
 
