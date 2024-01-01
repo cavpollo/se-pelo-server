@@ -152,7 +152,7 @@ fn main() {
                                                     owner_id: player_id,
                                                     leader_id: player_id,
                                                     round_counter: 1,
-                                                    round_total: 3, //TODO: Make Configurable
+                                                    round_total: 10, //TODO: Make Configurable
                                                     leader_player_position: 0,
                                                     selected_prompt_id: None,
                                                     winner_player_id: None,
