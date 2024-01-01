@@ -54,6 +54,7 @@ fn main() {
     let mut player_finishers: HashMap<u32, Vec<u16>> = HashMap::new();
     let mut room_available_prompts: HashMap<u32, Vec<u16>> = HashMap::new();
     let mut room_available_finishers: HashMap<u32, Vec<u16>> = HashMap::new();
+    let mut room_players_not_ready: HashMap<u32, Vec<u32>> = HashMap::new();
 
     //TODO: is the mutable Game Context stuff thread-safe?
     let game_context = GameContext {
@@ -65,7 +66,8 @@ fn main() {
         room_finishers: &mut room_finishers,
         player_finishers: &mut player_finishers,
         room_available_prompts: &mut room_available_prompts,
-        room_available_finishers: &mut room_available_finishers
+        room_available_finishers: &mut room_available_finishers,
+        room_players_not_ready: &mut room_players_not_ready
     };
 
 
@@ -150,8 +152,8 @@ fn main() {
                                                     owner_id: player_id,
                                                     leader_id: player_id,
                                                     round_counter: 1,
-                                                    round_total: 10, //TODO: Make Configurable
-                                                    turn_counter: 0,
+                                                    round_total: 3, //TODO: Make Configurable
+                                                    leader_player_position: 0,
                                                     selected_prompt_id: None,
                                                     winner_player_id: None,
                                                     winner_finisher_id: None
@@ -168,6 +170,8 @@ fn main() {
                                                 game_context.room_available_finishers.insert(room_id, vec![]);
 
                                                 game_context.player_finishers.insert(player_id, vec![]);
+
+                                                game_context.room_players_not_ready.insert(room_id, vec![]);
 
                                                 let response_room_create = ResponseRoomCreate { room_id: room_id, room_code: room_code_for_response, player_id: player_id };
                                                 let serialized_response = serde_json::to_string(&response_room_create).unwrap();
@@ -345,6 +349,8 @@ fn main() {
                                                             let player = player_optional.unwrap();
                                                             player.last_check = Instant::now();
 
+                                                            let room_players_not_ready = game_context.room_players_not_ready.get(&room_id).unwrap();
+
                                                             let players_in_room_response = players_in_room.iter().map(|room_player_id| {
                                                                 //TODO: Validate the user is in the context.users(?), otherwise 500
                                                                 let room_player = game_context.players.get(&room_player_id).unwrap();
@@ -359,11 +365,23 @@ fn main() {
                                                                         is_finisher_ready = Some(true);
                                                                     }
                                                                 }
+
+                                                                let is_player_next_round_ready: Option<bool>;
+                                                                match &room.room_status {
+                                                                    RoomStatus::RoundWinner => {
+                                                                        is_player_next_round_ready = Some(!room_players_not_ready.contains(&room_player_id));
+                                                                    },
+                                                                    _ => {
+                                                                        is_player_next_round_ready = None;
+                                                                    }
+                                                                }
+
                                                                 ResponseRoomCheckPlayer {
                                                                     player_id: room_player.id,
                                                                     player_name: room_player.name.to_string(),
                                                                     score: room_player.score,
                                                                     is_finisher_ready: is_finisher_ready,
+                                                                    is_next_round_ready: is_player_next_round_ready,
                                                                     last_check: u16::try_from(room_player.last_check.elapsed().as_secs()).unwrap()
                                                                 }
                                                             }).collect();
@@ -387,7 +405,7 @@ fn main() {
 
                                                                     response_finishers = None;
                                                                 },
-                                                                RoomStatus::NotifyWinner => {
+                                                                RoomStatus::RoundWinner => {
                                                                     let prompt_position = room.selected_prompt_id.unwrap();
                                                                     let prompt_position_usize = usize::try_from(prompt_position).unwrap();
                                                                     response_prompt_text = Some(prompts[prompt_position_usize].clone());
@@ -409,7 +427,7 @@ fn main() {
                                                                     }).collect();
 
                                                                     response_finishers = Some(converted_finishers);
-                                                                }
+                                                                },
                                                                 _ => {
                                                                     response_prompt_text = None;
                                                                     response_finishers = None;
@@ -494,88 +512,139 @@ fn main() {
                                                     request.respond(response).unwrap();
                                                 } else {
 
-                                                    let room = room_found.unwrap();
-
-                                                    if player_id != room.owner_id {
-                                                        println!("GameStart - Player {} is not the owner of the room", player_id);
+                                                    let players_in_room = game_context.room_players.get(&room_id).unwrap();
+                                                    let room_player_count = u8::try_from(players_in_room.len()).unwrap();
+                                                    if room_player_count <= 2 {
+                                                        println!("GameStart - Not enough players in room ({})", room_player_count);
 
                                                         let response = Response::new(StatusCode(400), headers, io::empty(), None, None);
                                                         request.respond(response).unwrap();
                                                     } else {
+                                                        let player_found = players_in_room.iter().find(|&p_id| p_id == &player_id);
+                                                        if player_found.is_none() {
+                                                            println!("GameStart - Player {} not found in room {}", player_id, room_id);
 
-                                                        let players_in_room = game_context.room_players.get(&room_id).unwrap();
-                                                        let room_player_count = u8::try_from(players_in_room.len()).unwrap();
-                                                        if room_player_count <= 2 {
-                                                            println!("GameStart - Not enough players in room ({})", room_player_count);
-
-                                                            let response = Response::new(StatusCode(400), headers, io::empty(), None, None);
+                                                            let response = Response::new(StatusCode(500), headers, io::empty(), None, None);
                                                             request.respond(response).unwrap();
                                                         } else {
-                                                            let player_found = players_in_room.iter().find(|&p_id| p_id == &player_id);
-                                                            if player_found.is_none() {
-                                                                println!("GameStart - Player {} not found in room {}", player_id, room_id);
+                                                            let player_optional = game_context.players.get(&player_id);
+                                                            if player_optional.is_none() {
+                                                                println!("GameStart - Player {} not found!!!", player_id);
 
                                                                 let response = Response::new(StatusCode(500), headers, io::empty(), None, None);
                                                                 request.respond(response).unwrap();
                                                             } else {
-                                                                let player_optional = game_context.players.get(&player_id);
-                                                                if player_optional.is_none() {
-                                                                    println!("GameStart - Player {} not found!!!", player_id);
+                                                                let room = room_found.unwrap();
 
-                                                                    let response = Response::new(StatusCode(500), headers, io::empty(), None, None);
-                                                                    request.respond(response).unwrap();
-                                                                } else {
+                                                                match room.room_status {
+                                                                    RoomStatus::Waiting => {
+                                                                        if player_id != room.owner_id {
+                                                                            println!("GameStart - Player {} is not the owner of the room", player_id);
 
-                                                                    match room.room_status {
-                                                                        RoomStatus::Waiting => {
+                                                                            let response = Response::new(StatusCode(400), headers, io::empty(), None, None);
+                                                                            request.respond(response).unwrap();
+                                                                        } else {
                                                                             // New game and round
                                                                             room.room_status = RoomStatus::LeaderOptions;
 
-                                                                            // No need to set the round_counter or turn_counter.
+                                                                            // No need to set the round_counter or leader_player_position.
                                                                             // The default values with which the Room was created are fine.
 
                                                                             let response = Response::new(StatusCode(204), headers, io::empty(), None, None);
                                                                             request.respond(response).unwrap();
-                                                                        },
-                                                                        RoomStatus::NotifyWinner => {
-                                                                            // Old game but new round
+                                                                        }
+                                                                    },
+                                                                    RoomStatus::RoundWinner => {
+                                                                        // Old game but new round
 
-                                                                            room.round_counter += 1;
-                                                                            room.turn_counter = (room.turn_counter + 1) % room_player_count;
+                                                                        let room_players_not_ready_found = game_context.room_players_not_ready.get_mut(&room_id);
+                                                                        if room_players_not_ready_found.is_none() {
+                                                                            println!("GameStart - Room {} of Players Ready not found", room_id);
 
-                                                                            let player_position_usize = usize::try_from(room.turn_counter).unwrap();
-                                                                            room.leader_id = players_in_room[player_position_usize];
+                                                                            let response = Response::new(StatusCode(500), headers, io::empty(), None, None);
+                                                                            request.respond(response).unwrap();
+                                                                        } else {
+                                                                            let room_players_not_ready = room_players_not_ready_found.unwrap();
+                                                                            room_players_not_ready.retain(|&p_id| p_id != player_id);
 
-                                                                            let mut reset_ok = true;
-                                                                            if room.round_counter <= room.round_total {
-                                                                                // Next round
+                                                                            if room_players_not_ready.is_empty() {
+                                                                                // All players are ready
 
-                                                                                // Nothing
+                                                                                room.selected_prompt_id = None;
+                                                                                room.winner_player_id = None;
+                                                                                room.winner_finisher_id = None;
+
+                                                                                if room.round_counter < room.round_total {
+                                                                                    // Next round
+
+                                                                                    // Clear Prompts
+                                                                                    game_context.room_prompts.get_mut(&room_id).unwrap().clear();
+
+                                                                                    room.round_counter += 1;
+                                                                                    room.leader_player_position = (room.leader_player_position + 1) % room_player_count;
+
+                                                                                    let player_position_usize = usize::try_from(room.leader_player_position).unwrap();
+                                                                                    room.leader_id = players_in_room[player_position_usize];
+
+                                                                                    room.room_status = RoomStatus::LeaderOptions;
+
+                                                                                    let response = Response::new(StatusCode(204), headers, io::empty(), None, None);
+                                                                                    request.respond(response).unwrap();
+                                                                                } else {
+                                                                                    // Game end
+
+                                                                                    // Leader and turn changes happen later during GameWinner.
+
+                                                                                    room.room_status = RoomStatus::GameWinner;
+
+                                                                                    let response = Response::new(StatusCode(204), headers, io::empty(), None, None);
+                                                                                    request.respond(response).unwrap();
+                                                                                }
 
                                                                             } else {
-                                                                                // New game
+                                                                                // Not all players are ready
 
-                                                                                room.round_counter = 1;
+                                                                                let response = Response::new(StatusCode(204), headers, io::empty(), None, None);
+                                                                                request.respond(response).unwrap();
+                                                                            }
+                                                                        }
+                                                                    },
+                                                                    RoomStatus::GameWinner => {
+                                                                        // Start a new Game
 
-                                                                                // Reset all the player scores
-                                                                                for room_player_id in players_in_room {
-                                                                                    let room_player_optional = game_context.players.get_mut(&room_player_id);
-                                                                                    if room_player_optional.is_none() {
-                                                                                        println!("GameStart - Player {} not found!!!", room_player_id);
+                                                                        if player_id != room.owner_id {
+                                                                            println!("GameStart - Player {} is not the owner of the room", player_id);
 
-                                                                                        reset_ok = false;
-                                                                                        break;
-                                                                                    } else {
-                                                                                        let room_player = room_player_optional.unwrap();
-                                                                                        room_player.score = 0;
-                                                                                    }
+                                                                            let response = Response::new(StatusCode(400), headers, io::empty(), None, None);
+                                                                            request.respond(response).unwrap();
+                                                                        } else {
+
+                                                                            // Reset all the player scores
+                                                                            let mut reset_ok = true;
+                                                                            for room_player_id in players_in_room {
+                                                                                let room_player_optional = game_context.players.get_mut(&room_player_id);
+                                                                                if room_player_optional.is_none() {
+                                                                                    println!("GameStart - Player {} not found!!!", room_player_id);
+
+                                                                                    reset_ok = false;
+                                                                                    break;
+                                                                                } else {
+                                                                                    let room_player = room_player_optional.unwrap();
+                                                                                    room_player.score = 0;
                                                                                 }
                                                                             }
 
                                                                             if reset_ok {
+                                                                                // Clear Prompts
                                                                                 game_context.room_prompts.get_mut(&room_id).unwrap().clear();
 
+                                                                                room.leader_player_position = (room.leader_player_position + 1) % room_player_count;
+
+                                                                                let player_position_usize = usize::try_from(room.leader_player_position).unwrap();
+                                                                                room.leader_id = players_in_room[player_position_usize];
+
                                                                                 room.room_status = RoomStatus::LeaderOptions;
+                                                                                room.round_counter = 1;
                                                                                 room.selected_prompt_id = None;
                                                                                 room.winner_player_id = None;
                                                                                 room.winner_finisher_id = None;
@@ -587,12 +656,12 @@ fn main() {
                                                                                 let response = Response::new(StatusCode(500), headers, io::empty(), None, None);
                                                                                 request.respond(response).unwrap();
                                                                             }
-                                                                        },
-                                                                        _ => {
-                                                                            println!("GameStart - Room not waiting");
-                                                                            let response = Response::new(StatusCode(400), headers, io::empty(), None, None);
-                                                                            request.respond(response).unwrap();
                                                                         }
+                                                                    }
+                                                                    _ => {
+                                                                        println!("GameStart - Room not waiting");
+                                                                        let response = Response::new(StatusCode(400), headers, io::empty(), None, None);
+                                                                        request.respond(response).unwrap();
                                                                     }
                                                                 }
                                                             }
@@ -988,14 +1057,27 @@ fn main() {
                                                                                 } else {
                                                                                     let winner_player = winner_player_optional.unwrap();
 
-                                                                                    winner_player.score += 1;
+                                                                                    let room_players_not_ready_found = game_context.room_players_not_ready.get_mut(&room_id);
+                                                                                    if room_players_not_ready_found.is_none() {
+                                                                                        println!("GamePick - Room {} of Players not Ready not found", room_id);
 
-                                                                                    room.room_status = RoomStatus::NotifyWinner;
-                                                                                    room.winner_player_id = Some(*winner_player_id);
-                                                                                    room.winner_finisher_id = Some(option_id);
+                                                                                        let response = Response::new(StatusCode(500), headers, io::empty(), None, None);
+                                                                                        request.respond(response).unwrap();
+                                                                                    } else {
+                                                                                        // No player is ready now (including leader)
+                                                                                        let mut clone = players_in_room.clone();
+                                                                                        room_players_not_ready_found.unwrap().append(&mut clone);
 
-                                                                                    let response = Response::new(StatusCode(204), headers, io::empty(), None, None);
-                                                                                    request.respond(response).unwrap();
+
+                                                                                        winner_player.score += 1;
+
+                                                                                        room.room_status = RoomStatus::RoundWinner;
+                                                                                        room.winner_player_id = Some(*winner_player_id);
+                                                                                        room.winner_finisher_id = Some(option_id);
+
+                                                                                        let response = Response::new(StatusCode(204), headers, io::empty(), None, None);
+                                                                                        request.respond(response).unwrap();
+                                                                                    }
                                                                                 }
                                                                             }
                                                                         }
@@ -1150,7 +1232,8 @@ impl fmt::Display for RoomStatus {
             RoomStatus::LeaderOptions => write!(f, "LEADER_OPTIONS"),
             RoomStatus::LackeyOptions => write!(f, "LACKEY_OPTIONS"),
             RoomStatus::LeaderPick => write!(f, "LEADER_PICK"),
-            RoomStatus::NotifyWinner => write!(f, "NOTIFY_WINNER"),
+            RoomStatus::RoundWinner => write!(f, "ROUND_WINNER"),
+            RoomStatus::GameWinner => write!(f, "GAME_WINNER")
         }
     }
 }
@@ -1161,16 +1244,12 @@ struct GameContext<'a> {
     rooms: &'a mut HashMap<u32, Room>,
     players: &'a mut HashMap<u32, Player>,
     room_players: &'a mut HashMap<u32, Vec<u32>>,
-    // Vect could be fixed size because we know the limt?
     room_prompts: &'a mut HashMap<u32, Vec<u16>>,
-    // Vect could be fixed size because we know the limt?
     room_finishers: &'a mut HashMap<u32, HashMap<u32, u16>>, // Inner map: PlayerId, FinisherId
-    // Vect could be fixed size because we know the limt?
     player_finishers: &'a mut HashMap<u32, Vec<u16>>,
-    // Vect could be fixed size because we know the limt?
     room_available_prompts: &'a mut HashMap<u32, Vec<u16>>,
-    // Vect could be fixed size because we know the limt?
-    room_available_finishers: &'a mut HashMap<u32, Vec<u16>>
+    room_available_finishers: &'a mut HashMap<u32, Vec<u16>>,
+    room_players_not_ready: &'a mut HashMap<u32, Vec<u32>>
 }
 
 enum GameAction {
@@ -1191,7 +1270,7 @@ struct Room {
     leader_id: u32,
     round_counter: u8,
     round_total: u8,
-    turn_counter: u8,
+    leader_player_position: u8,
     selected_prompt_id: Option<u16>,
     winner_player_id: Option<u32>,
     winner_finisher_id: Option<u16>
@@ -1202,7 +1281,8 @@ enum RoomStatus {
     LeaderOptions,
     LackeyOptions,
     LeaderPick,
-    NotifyWinner
+    RoundWinner,
+    GameWinner
 }
 
 struct Player {
@@ -1263,6 +1343,7 @@ struct ResponseRoomCheckPlayer {
     player_name: String,
     score: u8,
     is_finisher_ready: Option<bool>,
+    is_next_round_ready: Option<bool>,
     last_check: u16
 }
 
