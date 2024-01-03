@@ -17,8 +17,8 @@ use tiny_http::{Header, HeaderField, Method, Response, Server, StatusCode};
 
 fn main() {
     //TODO: is there a smarter way to read line by line things?
-    let prompts: Vec<String> = read_to_string("prompts.csv").unwrap().lines().map(String::from).collect();
-    let finishers: Vec<String> = read_to_string("finishers.csv").unwrap().lines().map(String::from).collect();
+    let prompts: Vec<String> = read_to_string("resources/prompts.csv").unwrap().lines().map(String::from).collect();
+    let finishers: Vec<String> = read_to_string("resources/finishers.csv").unwrap().lines().map(String::from).collect();
 
 
     let prompt_ids_usize: Vec<usize> = (0..prompts.len()).collect();
