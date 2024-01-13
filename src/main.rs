@@ -2,7 +2,6 @@ use std::collections::HashMap;
 use std::fmt;
 use std::fs::read_to_string;
 use std::io::{self, BufReader};
-use std::env;
 use std::option::Option;
 use std::str;
 use std::time::Instant;
@@ -11,14 +10,29 @@ use rand::Rng;
 use rand::distributions::{Alphanumeric, DistString};
 use rand::rngs::ThreadRng;
 
+use dotenv;
+
 use serde::{Deserialize, Serialize};
 use tiny_http::{Header, HeaderField, Method, Response, Server, StatusCode};
 
 
 fn main() {
+    match dotenv::dotenv() {
+        Ok(_) => {},
+        Err(..) => panic!("Dotenv is not working"),
+    };
+
     //TODO: is there a smarter way to read line by line things?
-    let prompts: Vec<String> = read_to_string("resources/prompts.csv").unwrap().lines().map(String::from).collect();
-    let finishers: Vec<String> = read_to_string("resources/finishers.csv").unwrap().lines().map(String::from).collect();
+    let prompts_path = match dotenv::var("PROMPTS_PATH") {
+        Ok(p) => p,
+        Err(..) => panic!("Provide a path to read the Prompts"),
+    };
+    let finishers_path = match dotenv::var("FINISHERS_PATH") {
+        Ok(p) => p,
+        Err(..) => panic!("Provide a path to read the Finishers"),
+    };
+    let prompts: Vec<String> = read_to_string(prompts_path).unwrap().lines().map(String::from).collect();
+    let finishers: Vec<String> = read_to_string(finishers_path).unwrap().lines().map(String::from).collect();
 
 
     let prompt_ids_usize: Vec<usize> = (0..prompts.len()).collect();
@@ -27,12 +41,12 @@ fn main() {
     let finisher_ids_usize: Vec<usize> = (0..finishers.len()).collect();
     let finisher_ids: Vec<u16> = finisher_ids_usize.iter().map(|&x| x as u16).collect();
 
-    let host = match env::var("HOST") {
+    let host = match dotenv::var("HOST") {
         Ok(p) => p,
         Err(..) => "0.0.0.0".to_string(),
     };
 
-    let port = match env::var("PORT") {
+    let port = match dotenv::var("PORT") {
         Ok(p) => p.parse::<u16>().unwrap(),
         Err(..) => 8000,
     };
