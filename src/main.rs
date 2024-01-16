@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 use std::fmt;
-use std::fs::read_to_string;
+use std::fs;
 use std::io::{self, BufReader};
 use std::option::Option;
 use std::str;
@@ -24,7 +24,7 @@ fn main() {
         Ok(pp) => pp,
         Err(..) => panic!("Provide a path to read the Prompts"),
     };
-    let prompts_string = match read_to_string(prompts_path.clone()) {
+    let prompts_string = match fs::read_to_string(prompts_path.clone()) {
         Ok(ps) => ps,
         Err(..) => panic!("Prompts were not found in path '{}'", prompts_path),
     };
@@ -35,7 +35,7 @@ fn main() {
         Ok(fp) => fp,
         Err(..) => panic!("Provide a path to read the Finishers"),
     };
-    let finishers_string = match read_to_string(finishers_path.clone()) {
+    let finishers_string = match fs::read_to_string(finishers_path.clone()) {
         Ok(ps) => ps,
         Err(..) => panic!("Finishers were not found in path '{}'", finishers_path),
     };
