@@ -1,4 +1,4 @@
-# ¡Se peló! - Client
+# ¡Se peló! - Server
 
 This is the server codebase for the "¡Se peló!" game, which is yet another CAH (Cards Against Humanity) clone.
 Just a hobby project hacked in a couple of days (including all of its horrible code practices). It is basically just a glorified game state machine.

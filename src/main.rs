@@ -17,13 +17,10 @@ use tiny_http::{Header, HeaderField, Method, Response, Server, StatusCode};
 
 
 fn main() {
-    match dotenv::dotenv() {
-        Ok(_) => {},
-        Err(..) => panic!("Dotenv is not working"),
-    };
+    let _ = dotenv::dotenv();
 
     //TODO: is there a smarter way to read line by line things?
-    let prompts_path = match dotenv::var("PROMPTS_PATH") {
+    let prompts_path = match std::env::var("PROMPTS_PATH") {
         Ok(pp) => pp,
         Err(..) => panic!("Provide a path to read the Prompts"),
     };
@@ -34,7 +31,7 @@ fn main() {
     let prompts: Vec<String> = prompts_string.lines().map(String::from).collect();
 
 
-    let finishers_path = match dotenv::var("FINISHERS_PATH") {
+    let finishers_path = match std::env::var("FINISHERS_PATH") {
         Ok(fp) => fp,
         Err(..) => panic!("Provide a path to read the Finishers"),
     };
@@ -51,12 +48,12 @@ fn main() {
     let finisher_ids_usize: Vec<usize> = (0..finishers.len()).collect();
     let finisher_ids: Vec<u16> = finisher_ids_usize.iter().map(|&x| x as u16).collect();
 
-    let host = match dotenv::var("HOST") {
+    let host = match std::env::var("HOST") {
         Ok(p) => p,
         Err(..) => "0.0.0.0".to_string(),
     };
 
-    let port = match dotenv::var("PORT") {
+    let port = match std::env::var("PORT") {
         Ok(p) => p.parse::<u16>().unwrap(),
         Err(..) => 8000,
     };
