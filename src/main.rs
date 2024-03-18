@@ -20,27 +20,19 @@ fn main() {
     let _ = dotenv::dotenv();
 
     //TODO: is there a smarter way to read line by line things?
-    let prompts_path = match std::env::var("PROMPTS_PATH") {
-        Ok(pp) => pp,
-        Err(..) => panic!("Provide a path to read the Prompts"),
-    };
-    let prompts_string = match fs::read_to_string(prompts_path.clone()) {
-        Ok(ps) => ps,
-        Err(..) => panic!("Prompts were not found in path '{}'", prompts_path),
-    };
+    let prompts_path = std::env::var("PROMPTS_PATH")
+        .expect("Provide a path to read the Prompts");
+    let prompts_string = fs::read_to_string(prompts_path.clone())
+        .expect(&format!("Prompts were not found in path '{prompts_path}'"));
     let prompts: Vec<String> = prompts_string.lines().map(String::from).collect();
+    //^ How about using an array instead? size is not meant to change
 
-
-    let finishers_path = match std::env::var("FINISHERS_PATH") {
-        Ok(fp) => fp,
-        Err(..) => panic!("Provide a path to read the Finishers"),
-    };
-    let finishers_string = match fs::read_to_string(finishers_path.clone()) {
-        Ok(ps) => ps,
-        Err(..) => panic!("Finishers were not found in path '{}'", finishers_path),
-    };
+    let finishers_path = std::env::var("FINISHERS_PATH")
+        .expect("Provide a path to read the Finishers");
+    let finishers_string = fs::read_to_string(finishers_path.clone())
+        .expect(&format!("Finishers were not found in path '{finishers_path}'"));
     let finishers: Vec<String> = finishers_string.lines().map(String::from).collect();
-
+    //^ How about using an array instead? size is not meant to change
 
     let prompt_ids_usize: Vec<usize> = (0..prompts.len()).collect();
     let prompt_ids: Vec<u16> = prompt_ids_usize.iter().map(|&x| x as u16).collect();
