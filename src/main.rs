@@ -145,7 +145,7 @@ fn main() {
                                             } else {
 
                                                 //TODO: Need thread safe id/code generator that doesn't repeat values...
-                                                let player_id = game_context.rng.gen();
+                                                let player_id = game_context.rng.r#gen();
                                                 let player = Player {
                                                     id: player_id,
                                                     name: trimmed_owner_name.to_string(),
@@ -154,7 +154,7 @@ fn main() {
                                                 };
                                                 game_context.players.insert(player_id, player);
 
-                                                let room_id: u32 = game_context.rng.gen();
+                                                let room_id: u32 = game_context.rng.r#gen();
                                                 let room_code = Alphanumeric.sample_string(game_context.rng, 6).to_uppercase();
                                                 let room_code_for_response = room_code.clone();
 
@@ -262,7 +262,7 @@ fn main() {
 
 
                                                     //TODO: Need thread safe id/code generator that doesn't repeat values...
-                                                    let player_id = game_context.rng.gen();
+                                                    let player_id = game_context.rng.r#gen();
                                                     let player = Player {
                                                         id: player_id,
                                                         name: trimmed_player_name.to_string(),
@@ -1051,7 +1051,7 @@ fn main() {
                                                                         } else {
                                                                             let room_finishers = room_finishers_optional.unwrap();
 
-                                                                            let player_finisher_found = room_finishers.iter().find(|(_, &val)| val == option_id);
+                                                                            let player_finisher_found = room_finishers.iter().find(|&(_, &val)| val == option_id);
                                                                             if player_finisher_found.is_none() {
                                                                                 println!("GamePick - Player {} finisher prompt {} not found", player_id, option_id);
 
