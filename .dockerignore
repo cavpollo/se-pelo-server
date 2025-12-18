@@ -2,9 +2,6 @@
 debug/
 target/
 
-# Cargo lock
-Cargo.lock
-
 # GIT
 .git
 .gitignore
